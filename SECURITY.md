@@ -181,18 +181,37 @@ exploitable on the current host**. The point is that the control lived in the
 platform, not the application. Severity is Medium rather than High for that
 reason.
 
-**Remediation.** Pin to `VERCEL_URL`, which the platform sets in the
-environment rather than reading from the request, and refuse a non-https
-fallback.
+**Remediation.** Allow-list the host before calling it: refuse non-https, and
+refuse any hostname that is not `VERCEL_URL`, `VERCEL_PROJECT_PRODUCTION_URL`,
+or a `*.vercel.app` host.
 
 ```ts
-const vercelUrl = process.env.VERCEL_URL?.trim();
-if (vercelUrl) return `https://${vercelUrl.replace(/^https?:\/\//, '')}`;
 const parsed = new URL(origin);
 if (parsed.protocol !== 'https:') {
   throw new Error('refusing to call a non-https inference backend');
 }
+const host = parsed.hostname.toLowerCase();
+const allowed =
+  host === process.env.VERCEL_URL?.trim().toLowerCase() ||
+  host === process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim().toLowerCase() ||
+  host.endsWith('.vercel.app');
+if (!allowed) {
+  throw new Error(`refusing to call an unrecognised backend host: ${host}`);
+}
+return origin;
 ```
+
+**Note on the first attempt.** The initial fix hard-pinned the backend to
+`VERCEL_URL` instead of allow-listing the request origin. That broke `POST
+/scan` in production: `VERCEL_URL` is the *deployment-specific* hostname, which
+has Vercel Deployment Protection enabled, so the gateway's own server-side fetch
+came back as a 401 "Protected deployment" page — which the gateway then returned
+to callers. Only the stable alias is exempt from protection.
+
+It was caught by re-testing the live endpoint after deploying, not by the build
+or the test suite, both of which passed. Recorded here because "the security fix
+broke the feature" is a normal outcome worth designing against, and because a
+security control that takes the service down is not a working control.
 
 ---
 
