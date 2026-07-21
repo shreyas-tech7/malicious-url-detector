@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import sys
@@ -163,10 +164,42 @@ def _hash_ip(ip: str) -> str | None:
     return hashlib.sha256(f"{salt}:{ip}".encode()).hexdigest()
 
 
-def _client_ip(request: Request, forwarded: str | None) -> str:
+def _client_ip(request: Request, forwarded: str | None,
+               real_ip: str | None = None) -> str:
+    """Best available client IP.
+
+    Deliberately NOT the leftmost X-Forwarded-For entry. That value is written
+    by the client, so trusting it lets anyone mint a fresh rate-limit bucket per
+    request simply by varying the header — the limiter becomes decorative. The
+    trustworthy entry is the one the last proxy appended, i.e. the RIGHTMOST.
+
+    Vercel also sets x-real-ip itself, which is preferable to parsing at all.
+    """
+    if real_ip and real_ip.strip():
+        return real_ip.strip()
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
     return request.client.host if request.client else ""
+
+
+def _redact_url(url: str) -> str:
+    """Drop the query string and fragment before a URL is persisted.
+
+    Query strings routinely carry password-reset tokens, session identifiers,
+    signed object URLs and API keys. Storing submitted URLs verbatim would turn
+    the prediction log into a secondary credential store — a more attractive
+    target than anything else in this project. The full string is still
+    represented by its SHA-256 for grouping repeat submissions.
+    """
+    raw = (url or "")[:2048]
+    for sep in ("?", "#"):
+        idx = raw.find(sep)
+        if idx != -1:
+            raw = raw[:idx] + sep + "[redacted]"
+            break
+    return raw
 
 
 def _supabase_cfg() -> tuple[str, str] | None:
@@ -206,23 +239,54 @@ def _supabase_post(path: str, payload: Any, timeout: float = 3.0) -> Any:
         return None
 
 
-def _rate_limited(ip_hash: str | None) -> bool:
-    """Supabase-backed counter, portable off Vercel.
+#: Per-instance fallback counter: {bucket: hits}. Trimmed opportunistically.
+_LOCAL_HITS: dict[str, int] = {}
 
-    Fails OPEN: if the database is unreachable we serve the request rather than
-    locking everyone out. That is the right trade for a demo endpoint; a system
-    where the limiter is a security control rather than an abuse deterrent
-    should fail closed instead.
+
+def _rate_limited_local(ip_hash: str) -> bool:
+    """In-process limiter used when no database is configured.
+
+    Honest about what this is: serverless instances are ephemeral and there may
+    be many of them, so an in-memory counter is a speed bump, not a control — a
+    distributed attacker gets one full budget per warm instance. It exists so
+    that an unconfigured deployment is not completely unmetered, which is
+    otherwise exactly what happens.
+
+    Real limiting comes from the Supabase counter below, or from Vercel
+    Firewall rate limiting at the edge.
     """
-    if not ip_hash or _supabase_cfg() is None:
+    minute = int(time.time() // 60)
+    bucket = f"{ip_hash}:{minute}"
+    if len(_LOCAL_HITS) > 2048:
+        _LOCAL_HITS.clear()  # bound memory; drops counters, never blocks
+    hits = _LOCAL_HITS.get(bucket, 0) + 1
+    _LOCAL_HITS[bucket] = hits
+    return hits > RATE_LIMIT_PER_MINUTE
+
+
+def _rate_limited(ip_hash: str | None) -> bool:
+    """Rate limit a caller, preferring the shared Supabase counter.
+
+    Fails OPEN on database error: a DB outage should not lock every user out of
+    a demo endpoint. A system where the limiter is a security control rather
+    than an abuse deterrent should fail closed instead.
+    """
+    if not ip_hash:
         return False
+    if _supabase_cfg() is None:
+        return _rate_limited_local(ip_hash)
+
     bucket = f"predict:{ip_hash}:{int(time.time() // 60)}"
     res = _supabase_post("/rest/v1/rpc/bump_rate_limit",
                          {"p_bucket": bucket, "p_window_seconds": 60})
+    if res is None:
+        # Database unreachable — fall back to the local counter rather than
+        # silently serving unlimited traffic.
+        return _rate_limited_local(ip_hash)
     try:
         return int(res) > RATE_LIMIT_PER_MINUTE
     except (TypeError, ValueError):
-        return False
+        return _rate_limited_local(ip_hash)
 
 
 def _log_prediction(**row) -> None:
@@ -330,16 +394,29 @@ def predict(
     body: PredictRequest,
     request: Request,
     x_forwarded_for: str | None = Header(default=None),
+    x_real_ip: str | None = Header(default=None),
 ) -> Any:
     started = time.time()
     bundle = _load_bundle()
 
-    ip_hash = _hash_ip(_client_ip(request, x_forwarded_for))
-    if _rate_limited(ip_hash):
+    ip = _client_ip(request, x_forwarded_for, x_real_ip)
+
+    # Two different keys on purpose.
+    #
+    # The rate-limit key is an unsalted digest held only in memory (or in a
+    # short-lived Supabase bucket) and never persisted to the prediction log,
+    # so it does not need the salt. The LOG key is salted and is None when no
+    # salt is configured. Deriving both from `ip_hash` previously meant that a
+    # missing IP_HASH_SALT silently disabled rate limiting as well as logging.
+    rate_key = hashlib.sha256(ip.encode()).hexdigest() if ip else None
+    ip_hash = _hash_ip(ip)
+
+    if _rate_limited(rate_key):
         return JSONResponse(
             status_code=429,
             content={"error": "rate limit exceeded",
                      "limit_per_minute": RATE_LIMIT_PER_MINUTE},
+            headers={"Retry-After": "60"},
         )
 
     x = _vectorise(bundle, body.url)
@@ -348,7 +425,9 @@ def predict(
     top = _explain(bundle, x, score)
 
     _log_prediction(
-        url=body.url[:2048],
+        # Query string stripped: see _redact_url. The SHA-256 below still
+        # identifies repeat submissions of the exact same URL.
+        url=_redact_url(body.url),
         url_sha256=hashlib.sha256(body.url.encode()).hexdigest(),
         verdict=verdict,
         score=round(score, 6),
@@ -450,7 +529,10 @@ def refresh_hashes(
             content={"error": "CRON_SECRET is not configured"},
         )
     presented = (authorization or "").removeprefix("Bearer ").strip()
-    if not presented or presented != secret:
+    # compare_digest, not `!=`: a plain comparison short-circuits on the first
+    # differing byte, which leaks the shared secret's prefix through response
+    # timing. Impractical over the public internet, trivial to avoid.
+    if not presented or not hmac.compare_digest(presented, secret):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
     if _supabase_cfg() is None:

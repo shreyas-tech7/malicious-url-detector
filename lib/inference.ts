@@ -22,9 +22,30 @@ export function resolveInferenceBase(request: Request): string {
   if (override) return override.replace(/\/$/, '');
 
   const origin = new URL(request.url).origin;
+
   // Locally, `next dev` and the Python function run on different ports.
   if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
     return 'http://127.0.0.1:8000';
+  }
+
+  // `request.url` is derived from the Host header, which is client-supplied.
+  // If a forged Host ever reached this function, the gateway would issue a
+  // server-side request to an attacker-chosen origin - an SSRF primitive, and
+  // precisely the class of bug this project's scope section says it avoids.
+  //
+  // Vercel validates Host against the deployment's aliases, so this is not
+  // exploitable on the current host. That makes the platform the control,
+  // though, not the code. Pinning to VERCEL_URL (set by the platform, not the
+  // request) keeps the guarantee in the application where it belongs.
+  const vercelUrl = process.env.VERCEL_URL?.trim();
+  if (vercelUrl) {
+    return `https://${vercelUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}`;
+  }
+
+  // No platform hint and no override: only same-origin https is acceptable.
+  const parsed = new URL(origin);
+  if (parsed.protocol !== 'https:') {
+    throw new Error('refusing to call a non-https inference backend');
   }
   return origin;
 }

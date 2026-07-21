@@ -167,3 +167,79 @@ def test_clean_document_is_not_flagged():
         "header_b64": base64.b64encode(b"%PDF-1.7").decode(),
     })
     assert r.json()["metadata"]["suspicion"] == "none"
+
+
+# --------------------------------------------------------------------------
+# Security behaviours (regression tests for the Phase 8 audit findings)
+# --------------------------------------------------------------------------
+def test_logged_url_has_query_string_redacted():
+    """Query strings carry reset tokens and session ids; they must not persist."""
+    from api.index import _redact_url
+
+    out = _redact_url(
+        "https://example.com/reset?token=SUPERSECRET123&user=alice")
+    assert "SUPERSECRET123" not in out
+    assert out.startswith("https://example.com/reset")
+    assert "[redacted]" in out
+
+    frag = _redact_url("https://example.com/p#access_token=SECRET")
+    assert "SECRET" not in frag
+
+    # A URL with no query is preserved intact.
+    assert _redact_url("https://example.com/a/b") == "https://example.com/a/b"
+
+
+def test_client_ip_ignores_attacker_supplied_leftmost_forwarded_for():
+    """The leftmost XFF entry is client-written and must not be trusted.
+
+    Trusting it would let anyone mint a fresh rate-limit bucket per request.
+    """
+    from api.index import _client_ip
+
+    class _Req:
+        client = None
+
+    # Rightmost entry is the one the trusted proxy appended.
+    assert _client_ip(_Req(), "1.2.3.4, 9.9.9.9") == "9.9.9.9"
+    # x-real-ip, set by the platform, wins outright.
+    assert _client_ip(_Req(), "1.2.3.4, 9.9.9.9", "8.8.8.8") == "8.8.8.8"
+
+
+def test_local_rate_limiter_engages_without_a_database():
+    """An unconfigured deployment must not be completely unmetered."""
+    from api import index as api_index
+
+    api_index._LOCAL_HITS.clear()
+    limit = api_index.RATE_LIMIT_PER_MINUTE
+
+    allowed = sum(
+        0 if api_index._rate_limited_local("test-key") else 1
+        for _ in range(limit + 5)
+    )
+    assert allowed == limit, f"expected {limit} allowed, got {allowed}"
+    assert api_index._rate_limited_local("test-key") is True
+    api_index._LOCAL_HITS.clear()
+
+
+def test_cron_endpoint_rejects_missing_and_wrong_secret(monkeypatch):
+    monkeypatch.setenv("CRON_SECRET", "correct-horse-battery-staple")
+
+    assert client.get("/api/refresh-hashes").status_code == 401
+    assert client.get(
+        "/api/refresh-hashes",
+        headers={"Authorization": "Bearer wrong"},
+    ).status_code == 401
+
+    # Correct secret gets past auth; without Supabase it reports 503 rather
+    # than pretending to have refreshed anything.
+    ok = client.get(
+        "/api/refresh-hashes",
+        headers={"Authorization": "Bearer correct-horse-battery-staple"},
+    )
+    assert ok.status_code == 503
+
+
+def test_unknown_path_returns_json_404_not_a_stack_trace():
+    r = client.get("/definitely/not/a/route")
+    assert r.status_code == 404
+    assert r.json()["received_path"] == "/definitely/not/a/route"
