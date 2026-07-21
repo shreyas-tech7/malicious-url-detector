@@ -1,0 +1,18 @@
+# Training-time dependencies (offline; NOT what ships to the serverless
+# function — see api/requirements.txt for the much smaller deploy set).
+#
+# Versions are pinned exactly. A joblib model bundle is sensitive to the
+# scikit-learn/numpy versions that produced it, so training and serving must
+# agree on the majors or unpickling can fail or silently misbehave.
+
+scikit-learn==1.9.0
+numpy==2.4.6
+scipy==1.17.1
+pandas==3.0.3
+joblib==1.5.3
+tldextract==5.3.1
+requests==2.34.2
+
+# dev / test
+pytest==9.1.1
+python-dotenv==1.2.2

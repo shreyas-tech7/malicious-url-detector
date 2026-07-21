@@ -1,0 +1,55 @@
+{
+  "commoncrawl": {
+    "domains_queried": 20,
+    "endpoint": "https://index.commoncrawl.org/CC-MAIN-2026-25-index",
+    "fetched_at": "2026-07-21T16:35:01+00:00",
+    "file": "benign_cc.jsonl",
+    "name": "Common Crawl URL index (CDX)",
+    "note": "URL index only; page content (WARC) never fetched.",
+    "per_domain": 5,
+    "summary": "Open corpus, free to use. We query only the URL *index* \u2014 we never fetch page content (WARC records).",
+    "terms_url": "https://commoncrawl.org/terms-of-use",
+    "urls": 33
+  },
+  "hackernews": {
+    "bias_note": "HN submissions skew technical; github.com and similar are over-represented relative to general web traffic.",
+    "endpoint": "https://hn.algolia.com/api/v1/search_by_date",
+    "fetched_at": "2026-07-21T16:47:25+00:00",
+    "file": "benign_hn.jsonl",
+    "name": "Hacker News via Algolia Search API",
+    "rows": 70285,
+    "summary": "Free public search API over HN submissions, no auth. Used as a source of real human-submitted benign URLs with paths.",
+    "terms_url": "https://hn.algolia.com/api"
+  },
+  "openphish": {
+    "endpoint": "https://raw.githubusercontent.com/openphish/public_feed/main/feed.txt",
+    "fetched_at": "2026-07-21T16:34:57+00:00",
+    "file": "openphish.csv",
+    "history_commits_walked": 800,
+    "name": "OpenPhish Community Feed",
+    "rows": 184909,
+    "summary": "Community feed is free for non-commercial use with attribution. Refreshed roughly every 12h; mirrored on GitHub.",
+    "terms_url": "https://openphish.com/terms.html"
+  },
+  "tranco": {
+    "endpoint": "https://tranco-list.eu/download/N29KW/1000000",
+    "fetched_at": "2026-07-21T16:34:26+00:00",
+    "file": "tranco.csv",
+    "list_id": "N29KW",
+    "name": "Tranco Top 1M",
+    "rows": 1000000,
+    "summary": "Research-oriented ranking, freely downloadable, no registration. Cite Le Pochat et al., NDSS 2019 when publishing.",
+    "terms_url": "https://tranco-list.eu/"
+  },
+  "urlhaus": {
+    "auth_key_required": false,
+    "auth_key_used": false,
+    "endpoint": "https://urlhaus.abuse.ch/downloads/csv_recent/",
+    "fetched_at": "2026-07-21T16:34:19+00:00",
+    "file": "urlhaus.csv",
+    "name": "URLhaus (abuse.ch)",
+    "rows": 20524,
+    "summary": "Free for both commercial and non-commercial use. Data is provided as CC0. Bulk CSV dumps require no authentication.",
+    "terms_url": "https://urlhaus.abuse.ch/api/"
+  }
+}

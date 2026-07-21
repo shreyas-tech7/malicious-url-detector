@@ -1,0 +1,446 @@
+{
+  "generated_at": "2026-07-21T19:01:23.759712+00:00",
+  "dataset_stats": {
+    "after_dedupe": {
+      "rows": 275839,
+      "malicious": 205433,
+      "benign": 70406,
+      "distinct_domains": 78245,
+      "domains_in_both_classes": 76
+    },
+    "final": {
+      "rows": 78193,
+      "malicious": 37753,
+      "benign": 40440,
+      "distinct_domains": 42978,
+      "domains_in_both_classes": 76
+    }
+  },
+  "experiments": {
+    "headline": {
+      "threshold": 0.5,
+      "precision": 0.937339981134618,
+      "recall": 0.9157451290152712,
+      "f1": 0.926416727708597,
+      "pr_auc": 0.9829156502245645,
+      "roc_auc": 0.9834554583173019,
+      "confusion": {
+        "tn": 7792,
+        "fp": 465,
+        "fn": 640,
+        "tp": 6956
+      },
+      "n": 15853,
+      "config": {
+        "name": "headline",
+        "split": "domain",
+        "include_reputation": false,
+        "drop_features": [],
+        "notes": "Domain-grouped split, no reputation features. The number to quote."
+      },
+      "meta": {
+        "n_train": 62340,
+        "n_test": 15853,
+        "n_train_domains": 34382,
+        "n_test_domains": 8596,
+        "train_pos_rate": 0.48375040102662814,
+        "test_pos_rate": 0.4791522109379928,
+        "n_iter": 400
+      }
+    },
+    "with_reputation": {
+      "threshold": 0.5,
+      "precision": 0.9452696373611669,
+      "recall": 0.9299631384939442,
+      "f1": 0.9375539186409184,
+      "pr_auc": 0.986424248723017,
+      "roc_auc": 0.9870433072154203,
+      "confusion": {
+        "tn": 7848,
+        "fp": 409,
+        "fn": 532,
+        "tp": 7064
+      },
+      "n": 15853,
+      "config": {
+        "name": "with_reputation",
+        "split": "domain",
+        "include_reputation": true,
+        "drop_features": [],
+        "notes": "Adds Tranco features. Benign URLs were sampled from Tranco-ranked domains, so these partly restate the label."
+      },
+      "meta": {
+        "n_train": 62340,
+        "n_test": 15853,
+        "n_train_domains": 34382,
+        "n_test_domains": 8596,
+        "train_pos_rate": 0.48375040102662814,
+        "test_pos_rate": 0.4791522109379928,
+        "n_iter": 400
+      }
+    },
+    "random_split": {
+      "threshold": 0.5,
+      "precision": 0.9515501274996645,
+      "recall": 0.9349861532375049,
+      "f1": 0.9431954237062657,
+      "pr_auc": 0.9886085674067231,
+      "roc_auc": 0.988994417118872,
+      "confusion": {
+        "tn": 7699,
+        "fp": 361,
+        "fn": 493,
+        "tp": 7090
+      },
+      "n": 15643,
+      "config": {
+        "name": "random_split",
+        "split": "random",
+        "include_reputation": false,
+        "drop_features": [],
+        "notes": "Naive row-level split. Shows how much campaign duplication inflates the score."
+      },
+      "meta": {
+        "n_train": 62550,
+        "n_test": 15643,
+        "n_train_domains": 36189,
+        "n_test_domains": 11737,
+        "train_pos_rate": 0.4823341326938449,
+        "test_pos_rate": 0.48475356389439367,
+        "n_iter": 400
+      }
+    },
+    "no_https_feature": {
+      "threshold": 0.5,
+      "precision": 0.9273675762439807,
+      "recall": 0.9127172195892576,
+      "f1": 0.919984076433121,
+      "pr_auc": 0.9774854835644103,
+      "roc_auc": 0.9787857884063201,
+      "confusion": {
+        "tn": 7714,
+        "fp": 543,
+        "fn": 663,
+        "tp": 6933
+      },
+      "n": 15853,
+      "config": {
+        "name": "no_https_feature",
+        "split": "domain",
+        "include_reputation": false,
+        "drop_features": [
+          "is_https"
+        ],
+        "notes": "Drops the strongest structural separator to test how much the model leans on it."
+      },
+      "meta": {
+        "n_train": 62340,
+        "n_test": 15853,
+        "n_train_domains": 34382,
+        "n_test_domains": 8596,
+        "train_pos_rate": 0.48375040102662814,
+        "test_pos_rate": 0.4791522109379928,
+        "n_iter": 400
+      }
+    }
+  },
+  "leakage_audit": {
+    "duplicate_urls": 0,
+    "domains_across_split": 0,
+    "urls_across_split": 0,
+    "single_feature_auc": {
+      "url_length": 0.6859301841662618,
+      "hostname_length": 0.6218079642199257,
+      "path_length": 0.738028417796525,
+      "query_length": 0.5325070386320495,
+      "url_entropy": 0.5994668652634965,
+      "hostname_entropy": 0.6101362317634251,
+      "digit_ratio": 0.6278701009421879,
+      "special_char_ratio": 0.6174796885675994,
+      "subdomain_count": 0.5242777242560269,
+      "path_depth": 0.6796778401061426,
+      "num_query_params": 0.5323196674186261,
+      "longest_token_length": 0.5609453119098912,
+      "is_https": 0.6967377445954275,
+      "is_ip_host": 0.546964035230508,
+      "has_at_symbol": 0.5053986136211577,
+      "has_port": 0.5348669568133312,
+      "is_shortener": 0.5004635393213784,
+      "has_punycode": 0.5004564552327386,
+      "has_non_ascii": 0.5001236399604352,
+      "hyphen_count": 0.613161337058311,
+      "double_slash_in_path": 0.5000245953557828,
+      "has_hex_encoding": 0.5012629275202136,
+      "min_brand_distance": 0.5608224985520045,
+      "brand_outside_domain": 0.5003364023474673,
+      "keyword_count": 0.5333376582593458,
+      "keyword_in_hostname": 0.5186329586138313,
+      "in_tranco": 0.6949536124011657,
+      "tranco_tier": 0.6963717587846434
+    },
+    "max_single_feature_auc": 0.738028417796525
+  },
+  "permutation_importance": [
+    {
+      "feature": "tld",
+      "importance": 0.12036400396100375,
+      "std": 0.003872192387617975
+    },
+    {
+      "feature": "path_length",
+      "importance": 0.057500736642622764,
+      "std": 0.0032668011192599953
+    },
+    {
+      "feature": "is_https",
+      "importance": 0.04063171321249228,
+      "std": 0.0034717131431901567
+    },
+    {
+      "feature": "digit_ratio",
+      "importance": 0.02138397985445819,
+      "std": 0.001061921001923559
+    },
+    {
+      "feature": "path_depth",
+      "importance": 0.009591081940185963,
+      "std": 0.0005775120418330864
+    },
+    {
+      "feature": "url_length",
+      "importance": 0.005460771778228612,
+      "std": 0.0010127392713244925
+    },
+    {
+      "feature": "special_char_ratio",
+      "importance": 0.004372446542977681,
+      "std": 0.0001673188788172251
+    },
+    {
+      "feature": "url_entropy",
+      "importance": 0.00382209194369032,
+      "std": 0.00023925092843575096
+    },
+    {
+      "feature": "keyword_count",
+      "importance": 0.0037030362754920444,
+      "std": 0.0005232578828955628
+    },
+    {
+      "feature": "hostname_length",
+      "importance": 0.0030857775906685037,
+      "std": 0.0002194544896364598
+    },
+    {
+      "feature": "hyphen_count",
+      "importance": 0.0027526702872767484,
+      "std": 0.00035060235396426587
+    },
+    {
+      "feature": "brand_outside_domain",
+      "importance": 0.001991178614826161,
+      "std": 0.00046161353555872214
+    },
+    {
+      "feature": "subdomain_count",
+      "importance": 0.0018152337060541647,
+      "std": 0.0002652645450209957
+    },
+    {
+      "feature": "longest_token_length",
+      "importance": 0.0015433290648189323,
+      "std": 0.00011014895331586557
+    },
+    {
+      "feature": "hostname_entropy",
+      "importance": 0.001349780502389697,
+      "std": 0.00021594586408098417
+    },
+    {
+      "feature": "min_brand_distance",
+      "importance": 0.0013215089163601146,
+      "std": 0.00024221696455161657
+    },
+    {
+      "feature": "query_length",
+      "importance": 0.0006274767795167113,
+      "std": 0.00017772412174862071
+    },
+    {
+      "feature": "has_at_symbol",
+      "importance": 0.00027656924437045036,
+      "std": 0.00011862325631368458
+    },
+    {
+      "feature": "has_hex_encoding",
+      "importance": 0.00011961578152812624,
+      "std": 5.7301043138919444e-05
+    },
+    {
+      "feature": "num_query_params",
+      "importance": 3.3638398586610663e-06,
+      "std": 1.0745798377785632e-05
+    },
+    {
+      "feature": "has_port",
+      "importance": 1.7554141367170928e-06,
+      "std": 1.4538787739452099e-05
+    },
+    {
+      "feature": "is_ip_host",
+      "importance": 0.0,
+      "std": 0.0
+    },
+    {
+      "feature": "is_shortener",
+      "importance": 0.0,
+      "std": 0.0
+    },
+    {
+      "feature": "has_punycode",
+      "importance": 0.0,
+      "std": 0.0
+    },
+    {
+      "feature": "has_non_ascii",
+      "importance": 0.0,
+      "std": 0.0
+    },
+    {
+      "feature": "double_slash_in_path",
+      "importance": 0.0,
+      "std": 0.0
+    },
+    {
+      "feature": "keyword_in_hostname",
+      "importance": -1.303034543487236e-06,
+      "std": 1.0724421181952023e-05
+    }
+  ],
+  "threshold_sweep": [
+    {
+      "threshold": 0.5,
+      "precision": 0.937339981134618,
+      "recall": 0.9157451290152712,
+      "flagged": 7421
+    },
+    {
+      "threshold": 0.7,
+      "precision": 0.9619322278298486,
+      "recall": 0.8782253817798842,
+      "flagged": 6935
+    },
+    {
+      "threshold": 0.8,
+      "precision": 0.9722853248523399,
+      "recall": 0.8451816745655608,
+      "flagged": 6603
+    },
+    {
+      "threshold": 0.9,
+      "precision": 0.9834254143646409,
+      "recall": 0.7967351237493417,
+      "flagged": 6154
+    },
+    {
+      "threshold": 0.95,
+      "precision": 0.9882352941176471,
+      "recall": 0.7519747235387045,
+      "flagged": 5780
+    },
+    {
+      "threshold": 0.99,
+      "precision": 0.9964620187304891,
+      "recall": 0.6303317535545023,
+      "flagged": 4805
+    }
+  ],
+  "per_source": {
+    "openphish": {
+      "n": 6622,
+      "recall": 0.9059196617336153
+    },
+    "urlhaus": {
+      "n": 974,
+      "recall": 0.9825462012320328
+    },
+    "commoncrawl": {
+      "n": 15,
+      "false_positive_rate": 0.06666666666666667
+    },
+    "hackernews": {
+      "n": 8242,
+      "false_positive_rate": 0.056297015287551565
+    }
+  },
+  "error_samples": {
+    "false_positives": [
+      {
+        "url": "https://manemasters.vip/",
+        "proba": 0.999
+      },
+      {
+        "url": "http://hintjens.com/blog:1061",
+        "proba": 0.999
+      },
+      {
+        "url": "https://65d7df6ffa7c4eb6ad309066bcf8e7bd.prod.enterapp.pro/",
+        "proba": 0.999
+      },
+      {
+        "url": "https://video-editor.ai-creator.top/",
+        "proba": 0.998
+      },
+      {
+        "url": "http://www.annajc.com/",
+        "proba": 0.998
+      },
+      {
+        "url": "http://replicated.live/blog/follow-up",
+        "proba": 0.998
+      },
+      {
+        "url": "http://replicated.live/blog/worktree",
+        "proba": 0.997
+      },
+      {
+        "url": "https://needhelp.icu/blogs/ssh-keysign-pwn/",
+        "proba": 0.997
+      }
+    ],
+    "false_negatives": [
+      {
+        "url": "https://www.scrippsnews.com/life/money/community-lenders-like-self-are-stepping-in-when-homeowners-need-help",
+        "proba": 0.0
+      },
+      {
+        "url": "https://alsahlahotel.com/inside-it-opens-to-reveal-two-compartments-divided-by-a/",
+        "proba": 0.001
+      },
+      {
+        "url": "https://willianrattis.com/akamai-uri-icons-test/view-akamai-icons.html",
+        "proba": 0.002
+      },
+      {
+        "url": "https://195.com/wp-admin/.wp-languages/.wjpl95qv_mlr.php/",
+        "proba": 0.002
+      },
+      {
+        "url": "https://www.pr-newsroom-wp.appspot.com/2024-03-01/a-letter-to-the-european-commission-on-apples-lack-of-dma-compliance/",
+        "proba": 0.003
+      },
+      {
+        "url": "https://spacecitytax.com/id.handel.moblie.de.spacecitytax.com/a",
+        "proba": 0.003
+      },
+      {
+        "url": "https://ldgerlive.framer.ai/",
+        "proba": 0.003
+      },
+      {
+        "url": "https://allowcoook.framer.ai/",
+        "proba": 0.004
+      }
+    ]
+  }
+}

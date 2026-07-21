@@ -61,3 +61,34 @@ list of domains to pull benign URLs for.
 
 This costs real wall-clock time (CDX is rate-limited, one query per domain) and
 it lowers the headline metrics versus the naive approach. That is the point.
+
+**Common Crawl went down mid-build; Hacker News became the primary benign
+source.** A 20-domain validation run against `index.commoncrawl.org` succeeded.
+The subsequent full run returned zero URLs in 16 minutes, and an independent
+5-query probe returned `ConnectTimeout` on every request — including after the
+collector was stopped, so this was not self-inflicted load. Common Crawl's index
+service is known to be intermittently unavailable.
+
+Rather than block the build on a flaky third party, benign URLs now come from
+the **Hacker News Algolia API** (free, no auth, fast). Measured on a 5-page
+sample: 970 URLs, **654 distinct hosts**, **86.5% with a real path** — which
+satisfies the structural-comparability requirement that motivated the Common
+Crawl choice in the first place.
+
+`fetch_commoncrawl_benign` is kept in the pipeline and runs best-effort under
+`all`, so the dataset gains source diversity whenever Common Crawl is reachable.
+
+Known bias, recorded rather than hidden: HN skews technical (github.com is the
+single most common host). Two consequences, both handled explicitly — the
+domain-grouped split prevents it leaking across train/test, and EVALUATION.md
+lists it as a limit on how far these numbers generalise to general web traffic.
+
+**The Tranco reputation feature is ablatable, and the headline metrics have it
+OFF.** Benign URLs are drawn from Tranco-ranked domains (and from HN, which
+also skews to well-ranked sites). That makes "is this domain in Tranco" close to
+a restatement of the label rather than a learned signal — the exact "feature
+that accidentally encodes the label" failure the spec warns about. Keeping it on
+would inflate precision while degrading the model into a domain whitelist that
+fails on the first legitimate site outside the top 1M. `features.py` supports
+`include_reputation=False`, and `evaluate.py` trains both configurations and
+reports the gap.
