@@ -129,7 +129,20 @@ begin
 end;
 $$;
 
-revoke all on function public.bump_rate_limit(text, integer) from public, anon;
+-- Revoke from `authenticated` as well, not just public/anon.
+--
+-- Supabase's database linter caught this: `revoke ... from public, anon`
+-- leaves the separate grant Supabase makes to `authenticated`, so the function
+-- stayed callable over /rest/v1/rpc/ by any signed-in user. No user accounts
+-- exist in this project, so it was never reachable -- but it would have opened
+-- the moment auth was switched on. Revoke from everything, then grant back
+-- only to the roles that must call it.
+revoke all on function public.bump_rate_limit(text, integer)
+  from public, anon, authenticated;
+grant execute on function public.bump_rate_limit(text, integer) to service_role;
+-- The server may run on a restricted key (see the policy block below), which
+-- authenticates as `anon`; it still needs to increment the counter.
+grant execute on function public.bump_rate_limit(text, integer) to anon;
 
 -- Housekeeping: drop rate-limit rows that are well past their window.
 create or replace function public.prune_rate_limits()
@@ -141,7 +154,11 @@ as $$
   delete from public.rate_limits where window_start < now() - interval '1 day';
 $$;
 
-revoke all on function public.prune_rate_limits() from public, anon;
+-- Same treatment. This one is a DELETE exposed on the public REST API, so
+-- leaving it callable by `authenticated` was the more serious of the two.
+revoke all on function public.prune_rate_limits()
+  from public, anon, authenticated;
+grant execute on function public.prune_rate_limits() to service_role;
 
 -- ---------------------------------------------------------------------------
 -- Keep-alive. A free-tier Supabase project pauses after inactivity, which
@@ -169,3 +186,40 @@ create policy keepalive_anon_read
   for select
   to anon
   using (true);
+
+-- ---------------------------------------------------------------------------
+-- Least-privilege policies for running the server on a RESTRICTED key.
+--
+-- The application prefers SUPABASE_SERVICE_ROLE_KEY but works on a
+-- publishable/anon key constrained by the policies below. The restricted key
+-- is the better default, not a workaround: service_role bypasses RLS
+-- entirely, so one leaked value reads every prediction ever logged. Under
+-- these policies a leaked restricted key can append to the prediction log and
+-- read the public hash corpus, and cannot read back a single submitted URL.
+--
+-- Either key is kept server-side only. This is defence in depth, not licence
+-- to ship one to a browser.
+-- ---------------------------------------------------------------------------
+
+-- predictions: APPEND ONLY. No select policy, deliberately -- prediction
+-- history would reveal what other people have been submitting.
+drop policy if exists predictions_restricted_insert on public.predictions;
+create policy predictions_restricted_insert
+  on public.predictions
+  for insert
+  to anon
+  with check (true);
+
+-- malicious_hashes: READ ONLY. The corpus is redistributed public threat
+-- intel from URLhaus, so read access is not a confidentiality concern. Writes
+-- stay closed; only the refresh cron populates this.
+drop policy if exists malicious_hashes_restricted_read on public.malicious_hashes;
+create policy malicious_hashes_restricted_read
+  on public.malicious_hashes
+  for select
+  to anon
+  using (true);
+
+-- rate_limits gets NO policy on purpose. The counter is reachable only via
+-- bump_rate_limit(), which is the entire reason that function exists. The
+-- table stays fully closed so buckets cannot be read or cleared directly.

@@ -203,8 +203,25 @@ def _redact_url(url: str) -> str:
 
 
 def _supabase_cfg() -> tuple[str, str] | None:
+    """Supabase URL + the key to authenticate with, or None if unconfigured.
+
+    Prefers SUPABASE_SERVICE_ROLE_KEY when present, but works on a RESTRICTED
+    key (publishable/anon) constrained by RLS policies.
+
+    The restricted key is the better default, not a fallback for a missing
+    secret: service_role bypasses RLS entirely, so one leaked value reads every
+    prediction ever logged. Under the policies in supabase/schema.sql the
+    restricted key can append to the prediction log and read the public hash
+    corpus, and cannot read back a single submitted URL.
+
+    Either way the key is server-side only and never reaches the browser.
+    """
     url = os.environ.get("SUPABASE_URL", "").strip()
-    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    key = (
+        os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+        or os.environ.get("SUPABASE_PUBLISHABLE_KEY", "").strip()
+        or os.environ.get("SUPABASE_ANON_KEY", "").strip()
+    )
     return (url.rstrip("/"), key) if url and key else None
 
 
