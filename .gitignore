@@ -52,3 +52,5 @@ ml/data/processed/*
 
 # Model artifacts ARE committed (the serverless function needs them at runtime)
 # — see ml/artifacts/. Nothing to ignore there.
+
+.vercel

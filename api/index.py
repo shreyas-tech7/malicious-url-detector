@@ -477,4 +477,26 @@ def refresh_hashes(
     }
 
 
+@app.api_route("/{full_path:path}",
+               methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+def fallback(full_path: str, request: Request) -> Any:
+    """Catch-all for unmatched paths.
+
+    Registered last, so it only runs when nothing above matched. It reports the
+    path the ASGI app actually received, which is the one piece of information
+    needed to debug Vercel's routing: a rewrite may deliver either the original
+    request path or the rewrite destination, and the difference decides whether
+    the real routes above are reachable.
+    """
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": "no such endpoint",
+            "received_path": "/" + full_path,
+            "available": ["/api/health", "/api/predict", "/api/check-file",
+                          "/api/refresh-hashes"],
+        },
+    )
+
+
 # Local dev:  uvicorn api.index:app --reload --port 8000
