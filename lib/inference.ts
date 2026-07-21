@@ -33,20 +33,27 @@ export function resolveInferenceBase(request: Request): string {
   // server-side request to an attacker-chosen origin - an SSRF primitive, and
   // precisely the class of bug this project's scope section says it avoids.
   //
-  // Vercel validates Host against the deployment's aliases, so this is not
-  // exploitable on the current host. That makes the platform the control,
-  // though, not the code. Pinning to VERCEL_URL (set by the platform, not the
-  // request) keeps the guarantee in the application where it belongs.
-  const vercelUrl = process.env.VERCEL_URL?.trim();
-  if (vercelUrl) {
-    return `https://${vercelUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}`;
-  }
-
-  // No platform hint and no override: only same-origin https is acceptable.
+  // So the origin is used (it has to be: it is the alias the caller actually
+  // reached, and only that alias is exempt from Vercel Deployment Protection)
+  // but it is checked against an allow-list first. An earlier version pinned
+  // to VERCEL_URL instead; that is the deployment-specific hostname, which IS
+  // protection-gated, so the gateway's own fetch came back as a 401 login page.
   const parsed = new URL(origin);
+
   if (parsed.protocol !== 'https:') {
     throw new Error('refusing to call a non-https inference backend');
   }
+
+  const host = parsed.hostname.toLowerCase();
+  const allowed =
+    host === process.env.VERCEL_URL?.trim().toLowerCase() ||
+    host === process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim().toLowerCase() ||
+    host.endsWith('.vercel.app');
+
+  if (!allowed) {
+    throw new Error(`refusing to call an unrecognised backend host: ${host}`);
+  }
+
   return origin;
 }
 
