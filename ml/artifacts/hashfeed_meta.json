@@ -1,0 +1,16 @@
+{
+  "source": "URLhaus payload feed (abuse.ch)",
+  "endpoint": "https://urlhaus.abuse.ch/downloads/payloads/",
+  "fetched_at": "2026-07-21T19:38:55+00:00",
+  "records_parsed": 200000,
+  "hashes_written": 200000,
+  "columns": [
+    "firstseen",
+    "url",
+    "filetype",
+    "md5",
+    "sha256",
+    "signature"
+  ],
+  "note": "Streamed and truncated at --limit; the upstream dump is ~775 MB. Hashes and static metadata only \u2014 no samples are ever downloaded or executed."
+}

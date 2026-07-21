@@ -51,5 +51,15 @@
     "rows": 20524,
     "summary": "Free for both commercial and non-commercial use. Data is provided as CC0. Bulk CSV dumps require no authentication.",
     "terms_url": "https://urlhaus.abuse.ch/api/"
+  },
+  "wikipedia": {
+    "endpoint": "https://en.wikipedia.org/w/api.php",
+    "fetched_at": "2026-07-21T20:01:14+00:00",
+    "file": "benign_wikipedia.jsonl",
+    "name": "Wikipedia external links (MediaWiki exturlusage API)",
+    "rationale": "Counters the Hacker News skew: adds non-technical, non-English, older and plain-http sites that HN lacks.",
+    "rows": 14325,
+    "summary": "Free MediaWiki API, no auth. External links cited in mainspace articles, used as benign long-tail examples.",
+    "terms_url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use"
   }
 }

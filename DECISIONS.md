@@ -92,3 +92,85 @@ would inflate precision while degrading the model into a domain whitelist that
 fails on the first legitimate site outside the top 1M. `features.py` supports
 `include_reputation=False`, and `evaluate.py` trains both configurations and
 reports the gap.
+
+---
+
+## Phase 3.5 — a defect the held-out set did not catch
+
+The model reported ~94% precision on its own test set while scoring
+`github.com/python/cpython/blob/main/Lib/json/decoder.py` at **0.97 malicious**.
+
+That gap is the whole lesson. The held-out set is drawn from the same feeds as
+the training data, so it measures generalisation to unseen *domains* but not to
+unseen *regions of the web*. Hand-writing 24 ordinary URLs and scoring them
+exposed a 16.7% false-positive rate concentrated entirely in one shape: paths
+ending in a filename with an extension.
+
+Two fixes, both addressing a real cause rather than the symptom:
+
+**1. Added `path_ext` as a categorical feature.** The model could see *that* a
+path ended in a file but not *which kind*. URLhaus is dominated by
+`/bins/mirai.arm7` and `/info.zip`, so "ends in a file" became a malicious
+signal and `.py`/`.rst`/`.md` were swept up with it. Giving the model the
+extension itself lets it separate them.
+
+**2. Added Wikipedia external links as a second benign source.** `path_ext`
+alone was not enough — it fixed `.md`/`.txt` but pushed `.php` the other way, so
+an ordinary restaurant's `/menu/starters.php` went from 0.24 to **0.955**. The
+real problem was that Hacker News is the modern, HTTPS, technical web, and the
+model had never seen the boring middle of it: universities, local government,
+small businesses, non-English sites, old CMSes on `.php`/`.asp`/`.htm`. Wikipedia
+citations are exactly that population, and they include plain-`http` references
+that also dilute the `is_https` artifact (benign HTTPS share fell 99.4% -> 95.5%).
+
+**This lowered the headline metric, which is the point.** Precision went
+0.9405 -> 0.9225 after adding Wikipedia. Nothing got worse; the evaluation got
+harder and more honest, because the benign class now contains URLs that
+genuinely resemble malicious ones. A number that drops when you add realistic
+data was measuring the wrong thing before.
+
+`ml/generalization_probe.py` is committed so this check is repeatable, and
+`reports/GENERALIZATION_PROBE.md` records the result. It is explicitly **not**
+a headline metric — 24-50 hand-written URLs cannot support a precision estimate
+with meaningful error bars. It is a smoke test for distribution shift.
+
+---
+
+## Phases 4-6 — signatures, API, gateway
+
+**The 775 MB payload feed is streamed, not downloaded.** URLhaus ships payload
+hashes as a single-member ZIP. `build_hashfeed.py` parses the local file header,
+inflates the deflate stream incrementally, and drops the connection once it has
+the requested number of rows — a few MB over the wire instead of 775. The
+committed local snapshot is 200k hashes / 7.6 MB.
+
+**`/check-file` takes a hash and at most 64 header bytes, never a file.** The
+client hashes locally and may send a small base64 header sample for magic-number
+checks. This keeps whole binaries out of the service entirely and still supports
+every static check the spec asks for (double extension, MIME/extension mismatch,
+MZ/ELF magic bytes).
+
+**A hash miss is reported as a miss, not as "clean."** The local table is a
+truncated subset, and `lookup_supabase` returns `None` rather than a negative
+verdict when the database is unreachable — a DB outage must never be presented
+to a user as "this file is safe."
+
+**Explanations are computed in log-odds, not probability.** Occlusion in
+probability space is useless on a confident prediction: at score 0.9999 every
+feature's contribution rounds to ~0.0001. The raw decision function keeps its
+resolution at the extremes. This was caught by looking at real output rather
+than by a test.
+
+**The Python function owns `/api/*`; the Next.js gateway lives at `/scan` and
+`/check`.** Both Vercel's Python runtime and the Next App Router want `/api/*`,
+and `app/api/**` would collide with `api/index.py`. Rather than fight the
+routing, each gets its own namespace. Input validation is deliberately
+duplicated in both layers: the gateway is the public contract and must reject
+hostile input on its own terms, and the backend must not assume it did.
+
+**Next 16 instead of the spec's Next 14** (approved during the build). Next
+14.2.35 carried a high-severity advisory set including SSRF and XSS entries.
+Most did not apply to this app's surface, but a security-themed repo showing
+`npm audit` findings is a bad look. Next 16 clears them; the two remaining
+moderates are a transitive `postcss` issue inside Next itself, whose suggested
+"fix" is a downgrade to Next 9.

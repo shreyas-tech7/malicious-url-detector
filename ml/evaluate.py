@@ -471,11 +471,20 @@ def write_report(m: dict) -> None:
         "",
         "Read these before quoting the headline number anywhere.",
         "",
-        "1. **Benign data skews technical.** Hacker News is the primary benign "
-        "source, so `github.com`, documentation sites and tech blogs are "
-        "over-represented relative to the general web. The model has seen "
-        "comparatively few ordinary small-business or non-English sites, and "
-        "false positives on those are likely higher than measured here.",
+        "1. **Benign data still skews technical, and the residual failure mode "
+        "is measurable.** Hacker News is the largest benign source; Wikipedia "
+        "external links were added specifically to cover the non-technical, "
+        "older, non-English web, which cut the worst false positives roughly "
+        "in half. What survives is documented in "
+        "[GENERALIZATION_PROBE.md](GENERALIZATION_PROBE.md): legitimate "
+        "hyphenated non-English domains such as "
+        "`clinicadental-sanchez.es/tratamientos/implantes` and "
+        "`ryokan-yamamoto.jp/rooms/standard.html` still score ~0.88-0.91. "
+        "That is not a bug so much as the ceiling of string-only "
+        "classification — a hyphenated, non-.com hostname is genuinely the "
+        "shape phishing uses, and nothing in the URL distinguishes a Spanish "
+        "dental clinic from an impersonation of one. Resolving it needs domain "
+        "reputation or registration age, i.e. signals outside the string.",
         "",
         "2. **Benign URLs are almost entirely HTTPS (99.4%) while malicious "
         "are 60%.** Some of that gap is genuine — malware hosts really do skew "

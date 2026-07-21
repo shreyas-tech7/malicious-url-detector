@@ -158,6 +158,7 @@ def build(max_per_domain: int, balance: bool) -> None:
     rows += _load_urlhaus()
     rows += _load_openphish()
     rows += _load_jsonl("benign_hn.jsonl", "hackernews", 0)
+    rows += _load_jsonl("benign_wikipedia.jsonl", "wikipedia", 0)
     rows += _load_jsonl("benign_cc.jsonl", "commoncrawl", 0)
 
     if not rows:

@@ -1,0 +1,21 @@
+# Dependencies for the DEPLOYED serverless function only.
+#
+# Kept intentionally small. scikit-learn + scipy + numpy already dominate the
+# bundle; anything else has to justify its size against Vercel's function size
+# limit. No PyTorch — the feature set is tabular and a neural model would add
+# hundreds of MB for no accuracy benefit.
+#
+# The scikit-learn / numpy pins MUST match ml/requirements.txt. A joblib bundle
+# is tied to the versions that produced it: a mismatch either fails to unpickle
+# or, worse, loads and scores subtly wrong.
+
+fastapi==0.139.2
+scikit-learn==1.9.0
+numpy==2.4.6
+scipy==1.17.1
+joblib==1.5.3
+
+# Needed by ml/features.py for eTLD+1 parsing. Configured with
+# suffix_list_urls=() and cache_dir=None so it never makes a network call or
+# writes to the read-only function filesystem.
+tldextract==5.3.1

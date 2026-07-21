@@ -54,9 +54,10 @@ ARTIFACTS = ROOT / "artifacts"
 SEED = 20260721
 
 # HistGradientBoostingClassifier requires categorical codes to fit inside
-# max_bins (255). There are well over a thousand TLDs, so keep the most common
-# and fold the tail into a single "other" bucket.
-MAX_TLD_VOCAB = 200
+# max_bins (255). There are well over a thousand TLDs (and a long tail of path
+# extensions), so keep the most common and fold the tail into a single
+# "<other>" bucket.
+MAX_CATEGORY_VOCAB = 200
 
 
 @dataclass
@@ -77,12 +78,18 @@ class TrainResult:
     model: HistGradientBoostingClassifier
     config: TrainConfig
     columns: list[str]
-    tld_vocab: dict[str, int]
+    #: {categorical column -> {value -> integer code}}, built from train rows.
+    vocabs: dict[str, dict[str, int]]
     X_test: np.ndarray
     y_test: np.ndarray
     test_df: pd.DataFrame
     train_domains: set
     test_domains: set
+    #: Per-feature medians over the TRAINING rows. Shipped in the bundle so the
+    #: inference function can produce per-prediction explanations by occlusion:
+    #: replace one feature with its median, re-score, and attribute the drop to
+    #: that feature.
+    feature_medians: np.ndarray | None = None
     meta: dict = field(default_factory=dict)
 
 
@@ -118,47 +125,52 @@ def make_split(df: pd.DataFrame, cfg: TrainConfig):
 
 
 def build_matrix(df: pd.DataFrame, cfg: TrainConfig,
-                 tld_vocab: dict[str, int] | None = None):
-    """Assemble the feature matrix, encoding the categorical TLD column.
+                 vocabs: dict[str, dict[str, int]] | None = None):
+    """Assemble the feature matrix, encoding every categorical column.
 
-    The TLD vocabulary is built from TRAIN ROWS ONLY. Building it over the full
-    dataset would let test-set information influence the encoding — a small
-    leak, but the entire point of this project is not to have any.
+    Vocabularies are built from TRAIN ROWS ONLY and passed back in for the test
+    split. Building them over the full dataset would let test-set information
+    influence the encoding — a small leak, but the entire point of this project
+    is not to have any.
+
+    Each vocabulary is capped at MAX_CATEGORY_VOCAB, because
+    HistGradientBoostingClassifier requires categorical codes to fit inside
+    max_bins (255). Everything past the cap folds into a shared "<other>".
     """
     cols = [c for c in feature_names(include_reputation=cfg.include_reputation)
             if c not in cfg.drop_features]
 
     numeric = [c for c in cols if c not in CATEGORICAL_FEATURES]
-    has_tld = "tld" in cols
+    categorical = [c for c in cols if c in CATEGORICAL_FEATURES]
 
-    if has_tld and tld_vocab is None:
-        counts = df["tld"].value_counts()
-        keep = list(counts.index[:MAX_TLD_VOCAB])
-        tld_vocab = {t: i for i, t in enumerate(keep)}
-        tld_vocab["<other>"] = len(tld_vocab)
+    if vocabs is None:
+        vocabs = {}
+        for c in categorical:
+            keep = list(df[c].value_counts().index[:MAX_CATEGORY_VOCAB])
+            v = {val: i for i, val in enumerate(keep)}
+            v["<other>"] = len(v)
+            vocabs[c] = v
 
-    X_num = df[numeric].to_numpy(dtype=np.float64)
+    blocks = [df[numeric].to_numpy(dtype=np.float64)]
+    for c in categorical:
+        v = vocabs[c]
+        other = v["<other>"]
+        codes = df[c].map(lambda t, _v=v, _o=other: _v.get(t, _o)).to_numpy()
+        blocks.append(codes.astype(np.float64).reshape(-1, 1))
 
-    if has_tld:
-        other = tld_vocab["<other>"]
-        codes = df["tld"].map(lambda t: tld_vocab.get(t, other)).to_numpy()
-        X = np.column_stack([X_num, codes.astype(np.float64)])
-        columns = numeric + ["tld"]
-        cat_mask = np.array([False] * len(numeric) + [True])
-    else:
-        X = X_num
-        columns = numeric
-        cat_mask = np.zeros(len(numeric), dtype=bool)
+    X = np.column_stack(blocks) if len(blocks) > 1 else blocks[0]
+    columns = numeric + categorical
+    cat_mask = np.array([False] * len(numeric) + [True] * len(categorical))
 
-    return X, columns, cat_mask, (tld_vocab or {})
+    return X, columns, cat_mask, vocabs
 
 
 def train(df: pd.DataFrame, cfg: TrainConfig) -> TrainResult:
     train_mask, test_mask = make_split(df, cfg)
     tr, te = df[train_mask], df[test_mask]
 
-    X_tr, columns, cat_mask, tld_vocab = build_matrix(tr, cfg)
-    X_te, _, _, _ = build_matrix(te, cfg, tld_vocab=tld_vocab)
+    X_tr, columns, cat_mask, vocabs = build_matrix(tr, cfg)
+    X_te, _, _, _ = build_matrix(te, cfg, vocabs=vocabs)
     y_tr = tr.label.to_numpy()
     y_te = te.label.to_numpy()
 
@@ -190,9 +202,10 @@ def train(df: pd.DataFrame, cfg: TrainConfig) -> TrainResult:
     print(f"[{cfg.name}] fitted in {model.n_iter_} boosting iterations")
 
     return TrainResult(
-        model=model, config=cfg, columns=columns, tld_vocab=tld_vocab,
+        model=model, config=cfg, columns=columns, vocabs=vocabs,
         X_test=X_te, y_test=y_te, test_df=te,
         train_domains=train_domains, test_domains=test_domains,
+        feature_medians=np.median(X_tr, axis=0),
         meta={"n_train": len(tr), "n_test": len(te),
               "n_train_domains": len(train_domains),
               "n_test_domains": len(test_domains),
@@ -206,11 +219,28 @@ def save_bundle(res: TrainResult, path: Path) -> Path:
     """Persist everything inference needs to reproduce training exactly."""
     import sklearn
 
+    import hashlib
+    from datetime import datetime, timezone
+
     path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Version string that changes whenever the training inputs change, so a
+    # logged prediction can always be traced back to the exact model.
+    fingerprint = hashlib.sha256(
+        (",".join(res.columns)
+         + str(res.meta.get("n_train"))
+         + str(res.config.seed)
+         + str(res.meta.get("n_iter"))).encode()
+    ).hexdigest()[:10]
+    version = f"{datetime.now(timezone.utc):%Y%m%d}-{fingerprint}"
+
     bundle = {
         "model": res.model,
         "columns": res.columns,
-        "tld_vocab": res.tld_vocab,
+        "vocabs": res.vocabs,
+        "feature_medians": (res.feature_medians.tolist()
+                            if res.feature_medians is not None else None),
+        "model_version": version,
         "include_reputation": res.config.include_reputation,
         "drop_features": list(res.config.drop_features),
         "sklearn_version": sklearn.__version__,

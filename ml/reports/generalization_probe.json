@@ -1,0 +1,210 @@
+{
+  "model_version": "20260721-c4ec03f8a7",
+  "threshold": 0.5,
+  "false_positive_rate": 0.13333333333333333,
+  "false_negative_rate": 0.0,
+  "benign": {
+    "code hosting (file paths with extensions)": [
+      {
+        "url": "https://github.com/scikit-learn/scikit-learn/blob/main/README.rst",
+        "score": 0.39579278519705063
+      },
+      {
+        "url": "https://github.com/python/cpython/blob/main/Lib/json/decoder.py",
+        "score": 0.5629287100346206
+      },
+      {
+        "url": "https://raw.githubusercontent.com/openphish/public_feed/main/feed.txt",
+        "score": 0.139726687710114
+      },
+      {
+        "url": "https://gitlab.com/gitlab-org/gitlab/-/blob/master/README.md",
+        "score": 0.036530015709780754
+      },
+      {
+        "url": "https://bitbucket.org/someteam/somerepo/src/master/setup.cfg",
+        "score": 0.14132049357604715
+      }
+    ],
+    "documentation": [
+      {
+        "url": "https://docs.python.org/3/library/urllib.parse.html",
+        "score": 0.02113791265101348
+      },
+      {
+        "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Type",
+        "score": 0.025161251548080573
+      },
+      {
+        "url": "https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.HistGradientBoostingClassifier.html",
+        "score": 0.16150541551625344
+      },
+      {
+        "url": "https://nginx.org/en/docs/http/ngx_http_ssl_module.html",
+        "score": 0.06007712212002573
+      }
+    ],
+    "news and reference": [
+      {
+        "url": "https://www.bbc.co.uk/news/world-us-canada-68123456",
+        "score": 0.0013728463533262394
+      },
+      {
+        "url": "https://www.nytimes.com/2026/07/21/technology/some-article.html",
+        "score": 0.003245687452584295
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Shannon_entropy",
+        "score": 0.04353179885047486
+      },
+      {
+        "url": "https://stackoverflow.com/questions/4172131/what-is-shannon-entropy",
+        "score": 0.027207054572230858
+      },
+      {
+        "url": "https://arxiv.org/abs/2301.00001",
+        "score": 0.007628325782283326
+      }
+    ],
+    "old web (.asp/.htm/.php/.jsp, query strings)": [
+      {
+        "url": "https://www.doctrine.usmc.mil/aspweb/historical.asp",
+        "score": 0.00044693539707713406
+      },
+      {
+        "url": "http://www.vedamsbooks.com/no24331.htm",
+        "score": 0.030779679090329044
+      },
+      {
+        "url": "https://www.tandoori-palace.co.uk/menu/starters.php",
+        "score": 0.6518535902086453
+      },
+      {
+        "url": "http://www.parish-council.gov.uk/minutes/2019/march.php?id=44",
+        "score": 0.06452836178224912
+      },
+      {
+        "url": "https://library.university.edu/search/results.jsp?query=entropy&page=2",
+        "score": 9.020450954848598e-05
+      },
+      {
+        "url": "http://www.museum-of-local-history.org/exhibits/index.php?section=3",
+        "score": 0.496810788736996
+      }
+    ],
+    "small business and long tail": [
+      {
+        "url": "https://smallbakery.co.nz/our-menu/gluten-free",
+        "score": 0.06059343261067975
+      },
+      {
+        "url": "https://joes-plumbing-dallas.com/services/emergency-repair",
+        "score": 0.14412462638846543
+      },
+      {
+        "url": "http://www.dorfmetzgerei-mueller.de/produkte/wurstwaren.html",
+        "score": 0.26614006664718565
+      },
+      {
+        "url": "https://clinicadental-sanchez.es/tratamientos/implantes",
+        "score": 0.9103791524112509
+      },
+      {
+        "url": "https://www.ryokan-yamamoto.jp/rooms/standard.html",
+        "score": 0.8755715801034465
+      }
+    ],
+    "apps with opaque paths and query strings": [
+      {
+        "url": "https://www.amazon.com/dp/B08N5WRWNW?ref_=ast_sto_dp",
+        "score": 0.47685841252077155
+      },
+      {
+        "url": "https://drive.google.com/file/d/1a2b3c4d5e6f/view?usp=sharing",
+        "score": 0.22054720378817352
+      },
+      {
+        "url": "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT",
+        "score": 0.49420200671143466
+      },
+      {
+        "url": "https://www.linkedin.com/in/some-person-12345678/",
+        "score": 0.07622956146973567
+      },
+      {
+        "url": "https://www.reddit.com/r/programming/comments/abc123/some_post_title/",
+        "score": 0.03886947822090768
+      }
+    ]
+  },
+  "malicious": {
+    "brand impersonation in subdomain/path": [
+      {
+        "url": "http://paypal.com.security-check.ru/login/verify/account.php",
+        "score": 0.9999930335666375
+      },
+      {
+        "url": "http://appleid.apple.com.verify-account.tk/signin",
+        "score": 0.9998583761256176
+      },
+      {
+        "url": "https://secure-microsoft-login.account-verify.cf/oauth/confirm",
+        "score": 0.9994738420450158
+      },
+      {
+        "url": "http://netflix-billing-update.com/account/payment/verify.php",
+        "score": 0.9999464407207331
+      }
+    ],
+    "typosquatting / homograph": [
+      {
+        "url": "https://paypa1.com/login/signin",
+        "score": 0.903551501321655
+      },
+      {
+        "url": "http://xn--pypal-4ve.com/signin/update-billing",
+        "score": 0.9893063682501341
+      },
+      {
+        "url": "https://arnazon-security.com/account/verify",
+        "score": 0.947266935014782
+      },
+      {
+        "url": "http://g00gle-docs-share.com/document/view",
+        "score": 0.984250619854568
+      }
+    ],
+    "raw IP hosts and malware payload paths": [
+      {
+        "url": "http://192.168.14.99:8080/bins/mirai.arm7",
+        "score": 0.9998695016766004
+      },
+      {
+        "url": "http://45.132.11.8/wp-content/uploads/2024/inv.php?id=8823",
+        "score": 0.9775061452044557
+      },
+      {
+        "url": "http://185.220.101.44:4433/dl/payload.exe",
+        "score": 0.99998368345936
+      },
+      {
+        "url": "http://91.207.174.9/bin.sh",
+        "score": 0.999952110756755
+      }
+    ],
+    "credential harvesting shapes": [
+      {
+        "url": "https://secure-appleid-verify.tk/confirm?session=abc123",
+        "score": 0.9992329472805072
+      },
+      {
+        "url": "http://account-suspended-verify-now.ml/unlock/login.php",
+        "score": 0.9999597930730316
+      },
+      {
+        "url": "https://webmail-secure-login.gq/owa/auth/logon.aspx?replaceCurrent=1",
+        "score": 0.9799643169010839
+      }
+    ]
+  }
+}

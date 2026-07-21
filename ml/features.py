@@ -38,7 +38,11 @@ import tldextract
 # list. A cold-starting serverless function must not make a network call just to
 # parse a hostname, and a feature that changes when a remote file changes is not
 # reproducible.
-_EXTRACT = tldextract.TLDExtract(suffix_list_urls=())
+#
+# cache_dir=None additionally stops tldextract from trying to write a cache
+# directory: a Vercel function's filesystem is read-only apart from /tmp, and a
+# failed cache write at import time would take the whole function down.
+_EXTRACT = tldextract.TLDExtract(suffix_list_urls=(), cache_dir=None)
 
 # --------------------------------------------------------------------------
 # Reference data
@@ -238,7 +242,16 @@ REPUTATION_FEATURES = ("in_tranco", "tranco_tier")
 
 #: Categorical features, passed to HistGradientBoostingClassifier's native
 #: categorical support via integer codes.
-CATEGORICAL_FEATURES = ("tld",)
+#:
+#: `path_ext` exists because of a concrete failure. Without it the model had no
+#: way to tell what *kind* of file a path points at — only that it points at
+#: one. URLhaus is dominated by paths like /bins/mirai.arm7 and /info.zip, so
+#: "path ends in a filename with an extension" became a malicious signal, and
+#: ordinary code-hosting links (github.com/.../decoder.py, README.rst) were
+#: flagged at up to 0.97. Giving the model the extension itself lets it learn
+#: that .py/.md/.rst differ from .exe/.scr/.arm7 instead of lumping them
+#: together.
+CATEGORICAL_FEATURES = ("tld", "path_ext")
 
 
 def feature_names(include_reputation: bool = True) -> list[str]:
@@ -292,6 +305,16 @@ def extract_features(
 
     lower_url = raw.lower()
     decoded = unquote(lower_url)
+
+    # Extension of the final path segment, if it looks like a real one.
+    # Bounded to short alphanumeric suffixes so that a path ending in, say,
+    # "/v1.2.3" or a UUID does not explode the category vocabulary.
+    path_ext = ""
+    last_segment = path.rsplit("/", 1)[-1] if path else ""
+    if "." in last_segment:
+        candidate = last_segment.rsplit(".", 1)[-1].lower()
+        if 1 <= len(candidate) <= 8 and candidate.isalnum():
+            path_ext = candidate
 
     # --- lexical ---------------------------------------------------------
     digits = sum(c.isdigit() for c in raw)
@@ -373,6 +396,7 @@ def extract_features(
         "keyword_in_hostname": float(kw_host),
 
         "tld": tld or "<none>",
+        "path_ext": path_ext or "<none>",
     }
 
     if include_reputation:

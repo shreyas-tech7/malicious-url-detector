@@ -1,0 +1,50 @@
+name: Supabase keep-alive
+
+# A free-tier Supabase project pauses after a stretch of inactivity, which
+# would make the deployed demo fail cold for whoever opens it next. This runs a
+# trivial query often enough to keep the project warm.
+#
+# Required repository secrets:
+#   SUPABASE_URL       https://<project-ref>.supabase.co
+#   SUPABASE_ANON_KEY  anon key (read-only; the keepalive table is the one
+#                      table with a select policy for anon)
+#
+# The workflow is a no-op until those secrets exist, so it is safe to merge
+# before Supabase is wired up.
+
+on:
+  schedule:
+    # 03:17 every third day. Off the hour on purpose: GitHub's scheduler is
+    # heavily contended at :00 and jobs get delayed or dropped.
+    - cron: '17 3 */3 * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "Supabase secrets not configured - skipping."
+            exit 0
+          fi
+
+          status=$(curl -sS -o /tmp/body.txt -w '%{http_code}' \
+            "${SUPABASE_URL}/rest/v1/keepalive?select=pinged_at&limit=1" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
+
+          echo "HTTP $status"
+          cat /tmp/body.txt
+
+          # Treat any 2xx as success. Anything else should fail loudly rather
+          # than let the project quietly pause.
+          case "$status" in
+            2*) echo "Keep-alive OK" ;;
+            *)  echo "Keep-alive failed with HTTP $status"; exit 1 ;;
+          esac

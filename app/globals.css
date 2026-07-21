@@ -2,26 +2,23 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * This demo commits to a single dark theme rather than following the system
+ * preference. The verdict card relies on red/green against a dark surface for
+ * contrast, and supporting both schemes would mean maintaining two palettes
+ * for what is a single page.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #020617; /* slate-950 */
+  --foreground: #e2e8f0; /* slate-200 */
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: dark;
 }
 
 body {
+  min-height: 100vh;
   color: var(--foreground);
   background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
-}
-
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
 }

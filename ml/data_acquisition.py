@@ -671,6 +671,134 @@ def fetch_hackernews_benign(target: int = 60_000, workers: int = 1) -> Path:
 
 
 # --------------------------------------------------------------------------
+# Wikipedia external links — benign long-tail web
+# --------------------------------------------------------------------------
+WIKIPEDIA_API = "https://en.wikipedia.org/w/api.php"
+
+
+def fetch_wikipedia_benign(target: int = 60_000,
+                           protocols: tuple[str, ...] = ("https", "http")) -> Path:
+    """Collect external links cited in Wikipedia articles.
+
+    Added to fix a measured failure, not for variety's sake. With Hacker News
+    as the only benign source the model saw a benign web that is modern,
+    HTTPS-only and technical, and it learned two false rules:
+
+      - a path ending in a file extension means malicious (URLhaus is full of
+        /bins/mirai.arm7), so github.com/.../decoder.py scored 0.96
+      - `.php` means malicious, so an ordinary restaurant's
+        /menu/starters.php scored 0.955
+
+    Wikipedia's references are the boring middle of the web: universities,
+    government sites, small publishers, non-English pages, old CMSes serving
+    .php/.asp/.htm/.pl, and a large tail of plain-http URLs. That is precisely
+    the benign population HN lacks.
+
+    Fetching both protocols is deliberate: benign URLs from HN are 99.4% HTTPS
+    while malicious ones are ~60%, which lets `is_https` act as a stronger
+    separator than it deserves to be. Wikipedia's http-era references dilute
+    that artifact with genuine examples.
+    """
+    out = RAW / "benign_wikipedia.jsonl"
+    seen: set[str] = set()
+
+    if out.exists():
+        with out.open(encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    seen.add(json.loads(line)["url"])
+                except (json.JSONDecodeError, KeyError):
+                    continue
+        print(f"[wiki] resuming — {len(seen):,} URLs already collected")
+
+    s = _session()
+    fh_out = out.open("a", encoding="utf-8")
+    per_protocol = max(target // len(protocols), 1)
+
+    try:
+        for proto in protocols:
+            cont: str | None = None
+            collected = 0
+            page = 0
+            while collected < per_protocol:
+                params = {
+                    "action": "query",
+                    "list": "exturlusage",
+                    "eulimit": 500,
+                    "eunamespace": 0,      # main article namespace only
+                    "euprotocol": proto,
+                    "format": "json",
+                }
+                if cont:
+                    params["eucontinue"] = cont
+
+                try:
+                    r = s.get(WIKIPEDIA_API, params=params, timeout=60)
+                except requests.RequestException as exc:
+                    print(f"[wiki] request error: {exc}")
+                    time.sleep(3)
+                    continue
+
+                if r.status_code == 429:
+                    print("[wiki] rate limited, backing off")
+                    time.sleep(10)
+                    continue
+                if r.status_code != 200:
+                    print(f"[wiki] status {r.status_code}, stopping {proto}")
+                    break
+
+                try:
+                    j = r.json()
+                except json.JSONDecodeError:
+                    break
+
+                batch = j.get("query", {}).get("exturlusage", [])
+                added = 0
+                for entry in batch:
+                    u = (entry.get("url") or "").strip()
+                    if not u.startswith(("http://", "https://")):
+                        continue
+                    if u in seen:
+                        continue
+                    seen.add(u)
+                    collected += 1
+                    added += 1
+                    fh_out.write(json.dumps({"url": u, "protocol": proto}) + "\n")
+
+                page += 1
+                if page % 20 == 0:
+                    fh_out.flush()
+                    print(f"[wiki] {proto}: {collected:,}/{per_protocol:,} "
+                          f"(total {len(seen):,})", flush=True)
+
+                cont = j.get("continue", {}).get("eucontinue")
+                if not cont or (added == 0 and not batch):
+                    print(f"[wiki] {proto}: no more results")
+                    break
+                time.sleep(0.2)  # be polite to a free API
+
+            fh_out.flush()
+            print(f"[wiki] {proto}: collected {collected:,}")
+    finally:
+        fh_out.close()
+
+    print(f"[wiki] {len(seen):,} unique URLs total")
+    _update_manifest(
+        "wikipedia",
+        name="Wikipedia external links (MediaWiki exturlusage API)",
+        terms_url="https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
+        summary=("Free MediaWiki API, no auth. External links cited in "
+                 "mainspace articles, used as benign long-tail examples."),
+        endpoint=WIKIPEDIA_API,
+        rows=len(seen),
+        file=out.name,
+        rationale=("Counters the Hacker News skew: adds non-technical, "
+                   "non-English, older and plain-http sites that HN lacks."),
+    )
+    return out
+
+
+# --------------------------------------------------------------------------
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -691,6 +819,9 @@ def main() -> int:
 
     h = sub.add_parser("hn")
     h.add_argument("--target", type=int, default=60_000)
+
+    w = sub.add_parser("wikipedia")
+    w.add_argument("--target", type=int, default=60_000)
 
     a = sub.add_parser("all")
     a.add_argument("--domains", type=int, default=3000)
@@ -714,11 +845,14 @@ def main() -> int:
         )
     elif args.cmd == "hn":
         fetch_hackernews_benign(target=args.target)
+    elif args.cmd == "wikipedia":
+        fetch_wikipedia_benign(target=args.target)
     elif args.cmd == "all":
         fetch_urlhaus()
         fetch_openphish()
         fetch_tranco()
         fetch_hackernews_benign(target=args.hn_target)
+        fetch_wikipedia_benign(target=args.hn_target)
         # Common Crawl is best-effort: its index intermittently refuses
         # connections. The build must not fail because a secondary benign
         # source is down.

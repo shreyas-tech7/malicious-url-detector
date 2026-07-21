@@ -1,0 +1,25 @@
+# Keep the deployed bundle small. vercel.json pulls in `ml/**` so the function
+# can import features.py/signatures.py and load the model artifact, but most of
+# ml/ is training-time only and has no business in a serverless bundle.
+
+ml/.venv/
+ml/data/
+ml/tests/
+ml/reports/
+ml/__pycache__/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+
+# Training-only scripts. The function imports features.py, signatures.py and
+# build_hashfeed.py (for the cron refresh) — nothing else here.
+ml/train.py
+ml/evaluate.py
+ml/build_dataset.py
+ml/data_acquisition.py
+ml/generalization_probe.py
+
+# Repo docs
+DECISIONS.md
+supabase/
+.github/
