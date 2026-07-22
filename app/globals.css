@@ -4,13 +4,48 @@
 
 /*
  * This demo commits to a single dark theme rather than following the system
- * preference. The verdict card relies on red/green against a dark surface for
- * contrast, and supporting both schemes would mean maintaining two palettes
- * for what is a single page.
+ * preference. The verdict card relies on red/amber/green against a dark
+ * surface for contrast, and supporting both schemes would mean maintaining
+ * two palettes for what is a single page.
+ *
+ * Colours are stored as space-separated sRGB channels, not hex, so Tailwind
+ * can compose them with an alpha modifier. Declaring a token as a whole
+ * `var(--x)` colour makes utilities like `bg-surface-1/60` unparseable, and
+ * Tailwind drops them silently — the class stays in the markup and no rule is
+ * ever emitted, so the element renders with no background at all.
+ *
+ * Text tones are floored at 4.5:1 against --surface-0. slate-500 (#64748b)
+ * measures 4.2:1 here and slate-600 measures 2.6:1, so neither is used for
+ * text at any size; --fg-faint is the darkest tone that still passes.
  */
 :root {
-  --background: #020617; /* slate-950 */
-  --foreground: #e2e8f0; /* slate-200 */
+  /* Surfaces, darkest first. */
+  --surface-0: 2 6 23; /*    #020617 */
+  --surface-1: 7 13 28; /*   #070d1c */
+  --surface-2: 13 21 38; /*  #0d1526 */
+
+  /* Hairlines. --line is decorative, --line-strong carries structure. */
+  --line: 26 36 55; /*       #1a2437 */
+  --line-strong: 39 50 74; /*#27324a */
+
+  /* Text. Measured contrast against --surface-0 in comments. */
+  --fg-strong: 241 245 249; /* #f1f5f9 — 17.1:1 */
+  --fg: 226 232 240; /*        #e2e8f0 — 15.0:1 */
+  --fg-muted: 148 163 184; /*  #94a3b8 —  7.9:1 */
+  --fg-faint: 126 142 166; /*  #7e8ea6 —  5.8:1, floor for small text */
+
+  /*
+   * Depth on a dark surface reads as a lit top edge more than as a cast
+   * shadow. Each card gets a 1px inset highlight plus a tight contact shadow
+   * and a wide ambient one, rather than a single oversaturated blur.
+   */
+  --shadow-card: inset 0 1px 0 0 rgb(255 255 255 / 0.04),
+    0 1px 2px 0 rgb(0 0 0 / 0.4), 0 8px 24px -8px rgb(0 0 0 / 0.5);
+  --shadow-raised: inset 0 1px 0 0 rgb(255 255 255 / 0.06),
+    0 2px 4px 0 rgb(0 0 0 / 0.4), 0 12px 32px -10px rgb(0 0 0 / 0.6);
+
+  /* Expo-out. Motion decelerates hard, like a needle settling on a reading. */
+  --ease-settle: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 html {
@@ -19,6 +54,59 @@ html {
 
 body {
   min-height: 100vh;
-  color: var(--foreground);
-  background: var(--background);
+  color: rgb(var(--fg));
+  background: rgb(var(--surface-0));
+}
+
+/*
+ * Numbers that sit in a column or update in place use lining tabular figures
+ * so digits never change the width of their container mid-scan.
+ */
+.tnum {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes sweep-x {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/*
+ * `animation: none`, not the usual `animation-duration: 0.01ms` reset.
+ *
+ * Both keyframes above end at the element's base style and begin at a hidden
+ * one — sweep-x starts at scaleX(0). Collapsing the duration leaves the bars
+ * pinned on their opening frame, so with reduced motion the score bar and
+ * every contribution bar render at zero width and the result becomes
+ * unreadable. Dropping the animation entirely lets each element paint at its
+ * static style, which is already the intended end state.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* A spinner frozen mid-arc reads as broken. The button's text carries it. */
+  .motion-only {
+    display: none;
+  }
 }

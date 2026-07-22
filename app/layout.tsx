@@ -27,8 +27,15 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      {/*
+       * `font-sans` has to be on the same element that defines the font
+       * variables. Tailwind's preflight puts `font-family` on <html>, where
+       * `--font-geist-sans` is not in scope — an undefined var invalidates the
+       * whole declaration, and the page silently falls back to the browser
+       * default serif. Applying it here keeps the var and its use on <body>.
+       */}
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}
       >
         {children}
       </body>

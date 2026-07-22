@@ -1,65 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-
-type Contribution = {
-  feature: string;
-  value: number;
-  contribution: number;
-};
-
-type Verdict = 'malicious' | 'uncertain' | 'benign';
-
-type ScanResult = {
-  url: string;
-  verdict: Verdict;
-  binary_verdict: 'malicious' | 'benign';
-  score: number;
-  threshold: number;
-  uncertain_band: [number, number];
-  model_version: string;
-  registrable_domain: string;
-  top_features: Contribution[];
-  disclaimer: string;
-};
-
-/**
- * Styling per verdict. `uncertain` is amber rather than red or green on
- * purpose: the point is that the model declined to call it, and either
- * confident colour would overstate what it knows.
- */
-const VERDICT_STYLES: Record<Verdict, {
-  label: string;
-  card: string;
-  text: string;
-  bar: string;
-}> = {
-  malicious: {
-    label: 'Likely malicious',
-    card: 'border-red-900/70 bg-red-950/30',
-    text: 'text-red-300',
-    bar: 'bg-red-500',
-  },
-  uncertain: {
-    label: 'Uncertain — worth a second look',
-    card: 'border-amber-900/70 bg-amber-950/25',
-    text: 'text-amber-300',
-    bar: 'bg-amber-500',
-  },
-  benign: {
-    label: 'Likely benign',
-    card: 'border-emerald-900/70 bg-emerald-950/25',
-    text: 'text-emerald-300',
-    bar: 'bg-emerald-500',
-  },
-};
-
-const EXAMPLES = [
-  'https://en.wikipedia.org/wiki/Shannon_entropy',
-  'http://paypal.com.security-check.ru/login/verify/account.php',
-  'http://192.168.14.99:8080/bins/mirai.arm7',
-  'https://github.com/python/cpython/blob/main/Lib/json/decoder.py',
-];
+import { ExampleChips } from './components/ExampleChips';
+import { FeatureContributions } from './components/FeatureContributions';
+import { ScanForm } from './components/ScanForm';
+import { VerdictCard } from './components/VerdictCard';
+import { EXAMPLES, isScanResult, type ScanResult } from './types';
 
 export default function Home() {
   const [url, setUrl] = useState('');
@@ -84,8 +30,12 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok) {
         setError(data?.error ?? `Request failed (${res.status})`);
+      } else if (isScanResult(data)) {
+        setResult(data);
       } else {
-        setResult(data as ScanResult);
+        // A 200 carrying a body we cannot render is a scanner fault, not a
+        // verdict. Better to say so than to throw somewhere down the tree.
+        setError('The scanner returned a response this page cannot read.');
       }
     } catch {
       setError('Could not reach the scanner.');
@@ -94,180 +44,99 @@ export default function Home() {
     }
   }
 
-  const style = result ? VERDICT_STYLES[result.verdict] : null;
-
   return (
-    <main className="mx-auto min-h-screen max-w-3xl px-6 py-12">
-      <header className="mb-10">
-        <h1 className="text-3xl font-semibold tracking-tight text-slate-100">
-          Malicious URL Detector
-        </h1>
-        <p className="mt-3 text-sm leading-relaxed text-slate-400">
+    <main className="mx-auto min-h-screen max-w-3xl px-6 py-14 sm:py-20">
+      <header>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+          <h1 className="text-3xl font-semibold tracking-display text-fg-strong sm:text-4xl">
+            Malicious URL Detector
+          </h1>
+          {/*
+           * The strongest thing this page can tell a first-time visitor is what
+           * it does *not* do with their input, so that claim gets its own
+           * element instead of being buried mid-sentence.
+           */}
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-line-strong bg-surface-1 px-2.5 py-1 text-[0.6875rem] font-medium text-fg-muted shadow-card">
+            <span
+              aria-hidden="true"
+              className="h-1.5 w-1.5 rounded-full bg-emerald-400"
+            />
+            Never fetches the link
+          </span>
+        </div>
+
+        <p className="mt-4 max-w-[62ch] text-sm leading-relaxed text-fg-muted">
           A gradient-boosted classifier over URL-derived features. It scores the
-          URL <strong className="text-slate-200">string only</strong> and never
-          fetches, opens, or renders the link you submit.
+          URL <strong className="font-medium text-fg-strong">string only</strong>
+          {' '}&mdash; the submitted link is never fetched, opened, or rendered.
         </p>
       </header>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          scan(url);
-        }}
-        className="flex flex-col gap-3 sm:flex-row"
-      >
-        <input
-          type="text"
+      <div className="mt-8">
+        <ScanForm
           value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://example.com/some/path"
-          spellCheck={false}
-          autoComplete="off"
-          className="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-slate-500"
+          onChange={setUrl}
+          onSubmit={() => scan(url)}
+          loading={loading}
         />
-        <button
-          type="submit"
-          disabled={loading || !url.trim()}
-          className="rounded-lg bg-slate-100 px-6 py-3 text-sm font-medium text-slate-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {loading ? 'Scanning...' : 'Scan URL'}
-        </button>
-      </form>
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        {EXAMPLES.map((ex) => (
-          <button
-            key={ex}
-            type="button"
-            onClick={() => {
-              setUrl(ex);
-              scan(ex);
-            }}
-            className="max-w-full truncate rounded-md border border-slate-800 bg-slate-900/60 px-3 py-1.5 text-xs text-slate-400 transition hover:border-slate-600 hover:text-slate-200"
-          >
-            {ex.length > 52 ? `${ex.slice(0, 52)}...` : ex}
-          </button>
-        ))}
       </div>
 
+      <ExampleChips
+        examples={EXAMPLES}
+        disabled={loading}
+        onPick={(next) => {
+          setUrl(next);
+          scan(next);
+        }}
+      />
+
+      {/*
+       * `role="alert"` is an assertive live region in its own right, so it sits
+       * outside the polite one below — nesting them makes several screen
+       * readers announce the same error twice.
+       */}
       {error && (
-        <div className="mt-8 rounded-lg border border-amber-900/60 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+        <div
+          role="alert"
+          className="mt-8 animate-rise-in rounded-xl border border-amber-900/60 bg-amber-950/25 px-5 py-4 text-sm text-amber-200 shadow-card"
+        >
           {error}
         </div>
       )}
 
-      {result && style && (
-        <section className="mt-8 space-y-5">
-          <div className={`rounded-xl border px-5 py-5 ${style.card}`}>
-            <div className="flex items-baseline justify-between gap-4">
-              <span className={`text-xl font-semibold ${style.text}`}>
-                {style.label}
-              </span>
-              <span className="font-mono text-sm text-slate-400">
-                {(result.score * 100).toFixed(1)}%
-              </span>
-            </div>
+      {/*
+       * Results replaced the previous content with no announcement, so a screen
+       * reader user got silence when a scan finished. The container is always
+       * mounted; only its contents change.
+       */}
+      <div aria-live="polite">
+        {result && (
+          <section
+            className="mt-8 animate-rise-in space-y-5"
+            aria-label="Scan result"
+          >
+            <VerdictCard result={result} />
 
-            <div className="relative mt-4 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
-              {/* The uncertain band, drawn so the score can be read against it. */}
-              <div
-                className="absolute inset-y-0 bg-slate-700/70"
-                style={{
-                  left: `${result.uncertain_band[0] * 100}%`,
-                  width: `${
-                    (result.uncertain_band[1] - result.uncertain_band[0]) * 100
-                  }%`,
-                }}
-              />
-              <div
-                className={`relative h-full ${style.bar}`}
-                style={{ width: `${Math.round(result.score * 100)}%` }}
-              />
-            </div>
-
-            {result.verdict === 'uncertain' && (
-              <p className="mt-3 text-xs leading-relaxed text-amber-200/80">
-                This score sits between {result.uncertain_band[0]} and{' '}
-                {result.uncertain_band[1]}, where about two thirds of the
-                model&apos;s mistakes occur. It is not a verdict.
-              </p>
+            {result.top_features?.length > 0 && (
+              <FeatureContributions features={result.top_features} />
             )}
 
-            <dl className="mt-4 grid gap-1 text-xs text-slate-400 sm:grid-cols-2 sm:gap-x-6">
-              <div className="flex justify-between gap-4">
-                <dt>Domain</dt>
-                <dd className="truncate font-mono text-slate-300">
-                  {result.registrable_domain || '-'}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt>Threshold</dt>
-                <dd className="font-mono text-slate-300">{result.threshold}</dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt>Model</dt>
-                <dd className="truncate font-mono text-slate-300">
-                  {result.model_version}
-                </dd>
-              </div>
-            </dl>
-          </div>
+            <p className="max-w-[68ch] text-xs leading-relaxed text-fg-faint">
+              {result.disclaimer}
+            </p>
+          </section>
+        )}
+      </div>
 
-          {result.top_features?.length > 0 && (
-            <div className="rounded-xl border border-slate-800 bg-slate-900/40 px-5 py-4">
-              <h2 className="text-sm font-medium text-slate-300">
-                What drove this score
-              </h2>
-              <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                Change in log-odds when each feature is replaced by its training
-                median. Positive pushes toward malicious.
-              </p>
-              <ul className="mt-3 space-y-1.5">
-                {result.top_features.map((f) => (
-                  <li
-                    key={f.feature}
-                    className="flex items-center justify-between gap-4 text-xs"
-                  >
-                    <span className="truncate font-mono text-slate-300">
-                      {f.feature}
-                    </span>
-                    <span className="flex shrink-0 items-center gap-3">
-                      <span className="text-slate-500">
-                        ={' '}
-                        {Number.isInteger(f.value)
-                          ? f.value
-                          : f.value.toFixed(2)}
-                      </span>
-                      <span
-                        className={`w-16 text-right font-mono ${
-                          f.contribution > 0
-                            ? 'text-red-400'
-                            : 'text-emerald-400'
-                        }`}
-                      >
-                        {f.contribution > 0 ? '+' : ''}
-                        {f.contribution.toFixed(3)}
-                      </span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          <p className="text-xs leading-relaxed text-slate-500">
-            {result.disclaimer}
-          </p>
-        </section>
-      )}
-
-      <footer className="mt-16 border-t border-slate-900 pt-6 text-xs leading-relaxed text-slate-600">
-        <p>
+      <footer className="mt-20 border-t border-line pt-6">
+        <p className="max-w-[68ch] text-xs leading-relaxed text-fg-faint">
           Portfolio demonstration of a full ML pipeline: data acquisition,
           leakage-aware evaluation, and serverless deployment. Not a substitute
           for a real security product. See{' '}
-          <code className="text-slate-500">ml/reports/EVALUATION.md</code> for
-          measured performance and an honest limitations section.
+          <code className="font-mono text-fg-muted">
+            ml/reports/EVALUATION.md
+          </code>{' '}
+          for measured performance and an honest limitations section.
         </p>
       </footer>
     </main>
