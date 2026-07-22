@@ -1,5 +1,5 @@
 {
-  "model_version": "20260721-c4ec03f8a7",
+  "model_version": "20260722-c4ec03f8a7",
   "threshold": 0.5,
   "false_positive_rate": 0.13333333333333333,
   "false_negative_rate": 0.0,
