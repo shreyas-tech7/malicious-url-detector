@@ -210,15 +210,45 @@ create policy predictions_restricted_insert
   to anon
   with check (true);
 
--- malicious_hashes: READ ONLY. The corpus is redistributed public threat
--- intel from URLhaus, so read access is not a confidentiality concern. Writes
--- stay closed; only the refresh cron populates this.
+-- malicious_hashes: READ, plus INSERT/UPDATE for the refresh cron.
+-- The corpus is redistributed public threat intel from URLhaus, so read
+-- access is not a confidentiality concern.
 drop policy if exists malicious_hashes_restricted_read on public.malicious_hashes;
 create policy malicious_hashes_restricted_read
   on public.malicious_hashes
   for select
   to anon
   using (true);
+
+-- The write policies below are a DELIBERATE TRADE-OFF, present only because
+-- service_role is not available to this deployment. Stated plainly:
+--
+--   Cost: a leaked restricted key could insert or amend rows here, i.e.
+--   poison the corpus so /check-file reports false positives.
+--   check_file_signature() consults Supabase BEFORE the committed local
+--   snapshot, so poisoned rows would take precedence.
+--
+--   Bound: the sha256/md5 CHECK constraints reject anything that is not a
+--   well-formed hash, so the corpus cannot be filled with arbitrary text, and
+--   no DELETE policy exists, so rows cannot be removed.
+--
+--   Removal: supply SUPABASE_SERVICE_ROLE_KEY and DROP these two policies.
+--   service_role bypasses RLS, so the refresh works with the table fully
+--   closed to every other role. That is the stronger configuration.
+drop policy if exists malicious_hashes_restricted_insert on public.malicious_hashes;
+create policy malicious_hashes_restricted_insert
+  on public.malicious_hashes
+  for insert
+  to anon
+  with check (true);
+
+drop policy if exists malicious_hashes_restricted_update on public.malicious_hashes;
+create policy malicious_hashes_restricted_update
+  on public.malicious_hashes
+  for update
+  to anon
+  using (true)
+  with check (true);
 
 -- rate_limits gets NO policy on purpose. The counter is reachable only via
 -- bump_rate_limit(), which is the entire reason that function exists. The

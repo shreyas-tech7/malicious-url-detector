@@ -186,11 +186,13 @@ def lookup_supabase(value: str) -> HashVerdict | None:
     Returning None (rather than a negative verdict) matters: a database outage
     must not be reported to the caller as 'this file is clean'.
     """
-    url = os.environ.get("SUPABASE_URL", "").strip()
-    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    from supabase_cfg import supabase_config
+
+    cfg = supabase_config()
     kind = classify_hash(value)
-    if not (url and key and kind):
+    if cfg is None or kind is None:
         return None
+    url, key = cfg
 
     try:
         import requests

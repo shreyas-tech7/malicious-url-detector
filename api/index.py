@@ -55,6 +55,7 @@ from signatures import (  # noqa: E402
     classify_hash,
     inspect_file_metadata,
 )
+from supabase_cfg import supabase_config, supabase_key_kind  # noqa: E402
 
 MODEL_PATH = _REPO_ROOT / "ml" / "artifacts" / "model.joblib"
 
@@ -203,26 +204,13 @@ def _redact_url(url: str) -> str:
 
 
 def _supabase_cfg() -> tuple[str, str] | None:
-    """Supabase URL + the key to authenticate with, or None if unconfigured.
+    """Supabase URL + key, or None when unconfigured.
 
-    Prefers SUPABASE_SERVICE_ROLE_KEY when present, but works on a RESTRICTED
-    key (publishable/anon) constrained by RLS policies.
-
-    The restricted key is the better default, not a fallback for a missing
-    secret: service_role bypasses RLS entirely, so one leaked value reads every
-    prediction ever logged. Under the policies in supabase/schema.sql the
-    restricted key can append to the prediction log and read the public hash
-    corpus, and cannot read back a single submitted URL.
-
-    Either way the key is server-side only and never reaches the browser.
+    Delegates to the shared resolver so this file cannot drift from
+    ml/signatures.py and ml/build_hashfeed.py — which is exactly what happened
+    once already and silently disabled hash lookups.
     """
-    url = os.environ.get("SUPABASE_URL", "").strip()
-    key = (
-        os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
-        or os.environ.get("SUPABASE_PUBLISHABLE_KEY", "").strip()
-        or os.environ.get("SUPABASE_ANON_KEY", "").strip()
-    )
-    return (url.rstrip("/"), key) if url and key else None
+    return supabase_config()
 
 
 def _supabase_post(path: str, payload: Any, timeout: float = 3.0) -> Any:
@@ -401,6 +389,9 @@ def health() -> dict:
         "n_features": n_features,
         "hash_table_entries": _HASH_INDEX.size,
         "supabase_configured": _supabase_cfg() is not None,
+        # Surfaced so a misconfigured key is visible from outside rather than
+        # showing up as silently-degraded lookups.
+        "supabase_key_kind": supabase_key_kind(),
         "fetches_submitted_urls": False,
     }
 
@@ -563,17 +554,29 @@ def refresh_hashes(
     try:
         from build_hashfeed import parse_feed, sync_supabase
         rows, _cols = parse_feed(limit=max(1, min(limit, 200_000)))
-        sync_supabase(rows)
+        upserted = sync_supabase(rows)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(
             status_code=502,
             content={"error": "refresh failed", "detail": str(exc)[:200]},
         )
 
-    return {
-        "refreshed": len(rows),
+    # `parsed` and `upserted` are reported SEPARATELY and the status reflects
+    # the write, not the read. An earlier version returned the parsed count as
+    # "refreshed", so the endpoint answered 200 {"refreshed": 5000} while
+    # writing zero rows — a success response for a no-op.
+    body = {
+        "parsed": len(rows),
+        "upserted": upserted,
         "elapsed_ms": int((time.time() - started) * 1000),
     }
+    if upserted == 0 and rows:
+        body["warning"] = (
+            "parsed rows but wrote none — check the Supabase key's write "
+            "permission on malicious_hashes"
+        )
+        return JSONResponse(status_code=502, content=body)
+    return body
 
 
 @app.api_route("/{full_path:path}",

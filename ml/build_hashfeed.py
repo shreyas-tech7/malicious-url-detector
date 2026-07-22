@@ -182,18 +182,27 @@ def write_local(rows: list[dict], path: Path) -> int:
     return kept
 
 
-def sync_supabase(rows: list[dict]) -> None:
-    """Upsert into Supabase if credentials are present.
+def sync_supabase(rows: list[dict]) -> int:
+    """Upsert into Supabase if credentials are present. Returns rows written.
 
-    Optional by design: the service degrades to the committed local table when
-    no database is configured.
+    Returns a COUNT rather than None, and raises on HTTP failure, because the
+    previous version did neither: it accepted only SUPABASE_SERVICE_ROLE_KEY,
+    silently returned when the server was configured with a restricted key,
+    and the caller then reported the number of rows *parsed* as the number
+    "refreshed". The endpoint answered `{"refreshed": 5000}` in 89 ms having
+    written exactly zero rows. A sync that cannot fail loudly is a sync you
+    cannot trust.
+
+    Key resolution deliberately mirrors api/index.py::_supabase_cfg.
     """
-    url = os.environ.get("SUPABASE_URL", "").strip()
-    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
-    if not (url and key):
-        print("[supabase] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set — "
-              "skipping sync (local fallback table is still written)")
-        return
+    from supabase_cfg import supabase_config
+
+    cfg = supabase_config()
+    if cfg is None:
+        print("[supabase] no SUPABASE_URL / key configured — skipping sync "
+              "(local fallback table is still written)")
+        return 0
+    url, key = cfg
 
     endpoint = f"{url.rstrip('/')}/rest/v1/malicious_hashes"
     headers = {
@@ -202,32 +211,43 @@ def sync_supabase(rows: list[dict]) -> None:
         "Content-Type": "application/json",
         "Prefer": "resolution=merge-duplicates,return=minimal",
     }
-    batch, total = [], 0
-    s = requests.Session()
-
+    # Deduplicate by sha256 BEFORE batching.
+    #
+    # URLhaus lists the same payload hash once per URL that served it, so a
+    # naive batch contains the same sha256 many times over — 200k feed rows
+    # collapse to ~119k distinct hashes. Postgres refuses an upsert that would
+    # touch the same key twice in one statement ("ON CONFLICT DO UPDATE command
+    # cannot affect row a second time"), which PostgREST surfaces as a bare
+    # HTTP 500. Deduplicating here is the fix; keeping the first occurrence is
+    # correct because the feed is ordered newest-first.
+    unique: dict[str, dict] = {}
     for r in rows:
         sha = _sha256(r)
-        if len(sha) != 64:
+        if len(sha) != 64 or sha in unique:
             continue
-        batch.append({
+        unique[sha] = {
             "sha256": sha,
             "md5": _md5(r) or None,
             "file_type": _filetype(r) or None,
             "signature": _field(r, "signature") or None,
             "source": "urlhaus",
-        })
-        if len(batch) >= 1000:
-            resp = s.post(endpoint, headers=headers, json=batch, timeout=120)
-            resp.raise_for_status()
-            total += len(batch)
-            batch = []
-            print(f"[supabase] upserted {total:,}", flush=True)
+        }
 
-    if batch:
+    payload = list(unique.values())
+    print(f"[supabase] {len(rows):,} feed rows -> {len(payload):,} distinct hashes")
+
+    total = 0
+    s = requests.Session()
+    for i in range(0, len(payload), 500):
+        batch = payload[i:i + 500]
         resp = s.post(endpoint, headers=headers, json=batch, timeout=120)
         resp.raise_for_status()
         total += len(batch)
+        if total % 5000 == 0:
+            print(f"[supabase] upserted {total:,}", flush=True)
+
     print(f"[supabase] upserted {total:,} rows total")
+    return total
 
 
 def main() -> int:
