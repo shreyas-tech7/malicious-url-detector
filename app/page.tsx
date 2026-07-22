@@ -1,131 +1,73 @@
 'use client';
 
 import { useState } from 'react';
-import { ExampleChips } from './components/ExampleChips';
-import { FeatureContributions } from './components/FeatureContributions';
-import { ScanForm } from './components/ScanForm';
-import { VerdictCard } from './components/VerdictCard';
-import { EXAMPLES, isScanResult, type ScanResult } from './types';
+import { FileScanPanel } from './components/FileScanPanel';
+import { ScanTabs, panelId, tabId, type ScanMode } from './components/ScanTabs';
+import { UrlScanPanel } from './components/UrlScanPanel';
 
 export default function Home() {
-  const [url, setUrl] = useState('');
-  const [result, setResult] = useState<ScanResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  async function scan(target: string) {
-    const value = target.trim();
-    if (!value) return;
-
-    setLoading(true);
-    setError(null);
-    setResult(null);
-
-    try {
-      const res = await fetch('/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: value }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data?.error ?? `Request failed (${res.status})`);
-      } else if (isScanResult(data)) {
-        setResult(data);
-      } else {
-        // A 200 carrying a body we cannot render is a scanner fault, not a
-        // verdict. Better to say so than to throw somewhere down the tree.
-        setError('The scanner returned a response this page cannot read.');
-      }
-    } catch {
-      setError('Could not reach the scanner.');
-    } finally {
-      setLoading(false);
-    }
-  }
+  const [mode, setMode] = useState<ScanMode>('url');
 
   return (
     <main className="mx-auto min-h-screen max-w-3xl px-6 py-14 sm:py-20">
       <header>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
           <h1 className="text-3xl font-semibold tracking-display text-fg-strong sm:text-4xl">
-            Malicious URL Detector
+            Malicious URL &amp; File-Signature Detector
           </h1>
           {/*
            * The strongest thing this page can tell a first-time visitor is what
            * it does *not* do with their input, so that claim gets its own
-           * element instead of being buried mid-sentence.
+           * element instead of being buried mid-sentence. It holds for both
+           * modes: the link is never dereferenced, the file never leaves the
+           * browser.
            */}
           <span className="inline-flex items-center gap-1.5 rounded-full border border-line-strong bg-surface-1 px-2.5 py-1 text-[0.6875rem] font-medium text-fg-muted shadow-card">
             <span
               aria-hidden="true"
               className="h-1.5 w-1.5 rounded-full bg-emerald-400"
             />
-            Never fetches the link
+            Nothing is fetched or uploaded
           </span>
         </div>
 
         <p className="mt-4 max-w-[62ch] text-sm leading-relaxed text-fg-muted">
-          A gradient-boosted classifier over URL-derived features. It scores the
-          URL <strong className="font-medium text-fg-strong">string only</strong>
-          {' '}&mdash; the submitted link is never fetched, opened, or rendered.
+          A gradient-boosted classifier over URL-derived features, plus a hash
+          lookup against a malicious-signature table. Links are scored as{' '}
+          <strong className="font-medium text-fg-strong">strings</strong> and
+          never fetched; files are hashed{' '}
+          <strong className="font-medium text-fg-strong">in your browser</strong>{' '}
+          and never uploaded.
         </p>
       </header>
 
       <div className="mt-8">
-        <ScanForm
-          value={url}
-          onChange={setUrl}
-          onSubmit={() => scan(url)}
-          loading={loading}
-        />
+        <ScanTabs value={mode} onChange={setMode} />
       </div>
 
-      <ExampleChips
-        examples={EXAMPLES}
-        disabled={loading}
-        onPick={(next) => {
-          setUrl(next);
-          scan(next);
-        }}
-      />
-
       {/*
-       * `role="alert"` is an assertive live region in its own right, so it sits
-       * outside the polite one below — nesting them makes several screen
-       * readers announce the same error twice.
+       * Both panels stay mounted and the inactive one is hidden, which is what
+       * the tabs pattern calls for: switching keeps each mode's result intact
+       * instead of discarding it, and neither panel refetches on return.
        */}
-      {error && (
+      <div className="mt-6">
         <div
-          role="alert"
-          className="mt-8 animate-rise-in rounded-xl border border-amber-900/60 bg-amber-950/25 px-5 py-4 text-sm text-amber-200 shadow-card"
+          role="tabpanel"
+          id={panelId('url')}
+          aria-labelledby={tabId('url')}
+          hidden={mode !== 'url'}
         >
-          {error}
+          <UrlScanPanel />
         </div>
-      )}
 
-      {/*
-       * Results replaced the previous content with no announcement, so a screen
-       * reader user got silence when a scan finished. The container is always
-       * mounted; only its contents change.
-       */}
-      <div aria-live="polite">
-        {result && (
-          <section
-            className="mt-8 animate-rise-in space-y-5"
-            aria-label="Scan result"
-          >
-            <VerdictCard result={result} />
-
-            {result.top_features?.length > 0 && (
-              <FeatureContributions features={result.top_features} />
-            )}
-
-            <p className="max-w-[68ch] text-xs leading-relaxed text-fg-faint">
-              {result.disclaimer}
-            </p>
-          </section>
-        )}
+        <div
+          role="tabpanel"
+          id={panelId('file')}
+          aria-labelledby={tabId('file')}
+          hidden={mode !== 'file'}
+        >
+          <FileScanPanel />
+        </div>
       </div>
 
       <footer className="mt-20 border-t border-line pt-6">

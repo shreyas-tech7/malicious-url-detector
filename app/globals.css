@@ -101,7 +101,15 @@ body {
   *::before,
   *::after {
     animation: none !important;
-    transition-duration: 0.01ms !important;
+    /*
+     * `transition: none`, not a 0.01ms duration, for the same reason as the
+     * animations above. Some transitioned properties here carry state rather
+     * than decoration — the tab pill's position is a transform — and a
+     * property left stranded on its start value puts the pill under the wrong
+     * tab. Removing the transition makes the element paint at its declared
+     * value immediately, which is the correct end state either way.
+     */
+    transition: none !important;
     scroll-behavior: auto !important;
   }
 

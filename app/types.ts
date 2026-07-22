@@ -153,3 +153,120 @@ export const EXAMPLES: Example[] = [
     url: "https://github.com/python/cpython/blob/main/Lib/json/decoder.py",
   },
 ];
+
+/* ------------------------------------------------------------------ */
+/* File-signature check — POST /check                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Result of looking a digest up against the malicious-hash table.
+ *
+ * `known_malicious: false` is a miss, not a clearance. The local snapshot is a
+ * truncated subset of the URLhaus payload feed, and the API says so in `note`
+ * — the UI must not upgrade that into a clean bill of health.
+ */
+export type HashLookup = {
+  known_malicious: boolean;
+  hash_type: string | null;
+  source?: string | null;
+  file_type?: string | null;
+  signature?: string | null;
+  lookup_backend: string;
+  note?: string;
+  error?: string;
+};
+
+export type Severity = "high" | "medium" | "low";
+
+export type MetadataFinding = {
+  check: string;
+  severity: Severity;
+  detail: string;
+};
+
+export type Suspicion = "none" | Severity;
+
+/** Static checks over filename, declared MIME and the header sample. */
+export type FileMetadata = {
+  suspicion: Suspicion;
+  extensions: string[];
+  magic: string | null;
+  magic_is_executable: boolean;
+  findings: MetadataFinding[];
+  note: string;
+};
+
+/**
+ * Both members are conditional: the API returns `hash_lookup` only when given
+ * a hash, and `metadata` only when given a filename, MIME type or header.
+ */
+export type CheckResult = {
+  hash_lookup?: HashLookup;
+  metadata?: FileMetadata;
+  disclaimer: string;
+};
+
+const SUSPICIONS: readonly Suspicion[] = ["none", "low", "medium", "high"];
+const SEVERITIES: readonly Severity[] = ["low", "medium", "high"];
+
+/** Optional in the response, but must be a string when present. */
+const optionalString = (v: unknown): boolean =>
+  v === undefined || v === null || typeof v === "string";
+
+/*
+ * Every field these guards skip is a field the card will render unchecked.
+ * `metadata.note` carries the "neither executed nor unpacked" scope
+ * disclaimer, and `findings[].check` is used as a React key — so the rule is
+ * that anything reaching the DOM gets validated, not just the fields that
+ * would throw if absent.
+ */
+const isHashLookup = (v: unknown): v is HashLookup => {
+  const h = v as HashLookup;
+  return (
+    !!h &&
+    typeof h === "object" &&
+    typeof h.known_malicious === "boolean" &&
+    typeof h.lookup_backend === "string" &&
+    optionalString(h.hash_type) &&
+    optionalString(h.source) &&
+    optionalString(h.file_type) &&
+    optionalString(h.signature) &&
+    optionalString(h.note) &&
+    optionalString(h.error)
+  );
+};
+
+const isFileMetadata = (v: unknown): v is FileMetadata => {
+  const m = v as FileMetadata;
+  return (
+    !!m &&
+    typeof m === "object" &&
+    SUSPICIONS.includes(m.suspicion) &&
+    typeof m.magic_is_executable === "boolean" &&
+    typeof m.note === "string" &&
+    optionalString(m.magic) &&
+    Array.isArray(m.extensions) &&
+    m.extensions.every((e) => typeof e === "string") &&
+    Array.isArray(m.findings) &&
+    m.findings.every(
+      (f) =>
+        !!f &&
+        typeof f === "object" &&
+        typeof f.check === "string" &&
+        typeof f.detail === "string" &&
+        SEVERITIES.includes(f.severity),
+    )
+  );
+};
+
+/** Narrows a parsed `/check` body before it reaches the render tree. */
+export function isCheckResult(value: unknown): value is CheckResult {
+  const r = value as CheckResult;
+  if (!r || typeof r !== "object" || typeof r.disclaimer !== "string") {
+    return false;
+  }
+  if (r.hash_lookup !== undefined && !isHashLookup(r.hash_lookup)) return false;
+  if (r.metadata !== undefined && !isFileMetadata(r.metadata)) return false;
+  // A body carrying neither section has nothing to render.
+  return r.hash_lookup !== undefined || r.metadata !== undefined;
+}
