@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "check:bundle": "node scripts/check-bundle-size.mjs",
     "audit:prod": "npm audit --omit=dev"
   },
