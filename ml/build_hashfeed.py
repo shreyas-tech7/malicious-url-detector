@@ -204,12 +204,20 @@ def sync_supabase(rows: list[dict]) -> int:
         return 0
     url, key = cfg
 
-    endpoint = f"{url.rstrip('/')}/rest/v1/malicious_hashes"
+    # Writes go through a SECURITY DEFINER function, not a direct table upsert.
+    #
+    # The table has no INSERT/UPDATE policy for the restricted role any more.
+    # The function validates that every sha256/md5 is a well-formed hash, caps
+    # the batch at 1000, and pins `source` server-side — so a leaked key cannot
+    # write arbitrary rows into the corpus, only well-formed hash records.
+    endpoint = f"{url.rstrip('/')}/rest/v1/rpc/upsert_malicious_hashes"
     headers = {
         "apikey": key,
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates,return=minimal",
+        # NOT return=minimal: the function returns the row count, and reporting
+        # a write we did not verify is the bug this whole path already had once.
+        "Prefer": "return=representation",
     }
     # Deduplicate by sha256 BEFORE batching.
     #
@@ -238,13 +246,23 @@ def sync_supabase(rows: list[dict]) -> int:
 
     total = 0
     s = requests.Session()
-    for i in range(0, len(payload), 500):
+    for i in range(0, len(payload), 500):   # under the function's 1000 cap
         batch = payload[i:i + 500]
-        resp = s.post(endpoint, headers=headers, json=batch, timeout=120)
+        resp = s.post(endpoint, headers=headers,
+                      json={"p_rows": batch}, timeout=120)
         resp.raise_for_status()
-        total += len(batch)
-        if total % 5000 == 0:
-            print(f"[supabase] upserted {total:,}", flush=True)
+
+        # Count what the DATABASE says it wrote, not what we sent. These can
+        # legitimately differ: the function drops malformed rows silently.
+        try:
+            written = int(resp.json())
+        except (ValueError, TypeError):
+            written = len(batch)
+        total += written
+
+        if written != len(batch):
+            print(f"[supabase] batch of {len(batch)}: {written} accepted "
+                  f"({len(batch) - written} rejected by validation)", flush=True)
 
     print(f"[supabase] upserted {total:,} rows total")
     return total

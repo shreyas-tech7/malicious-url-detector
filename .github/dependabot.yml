@@ -1,0 +1,57 @@
+version: 2
+
+# Exists because of a concrete miss. A high-severity advisory for `sharp`
+# (four inherited libvips CVEs) was published against an already-pinned Next
+# version, days after an audit had recorded the tree as clean. That was only
+# caught because someone thought to re-run `npm audit`. This removes the
+# dependency on remembering.
+#
+# Grouped so a quiet week produces one PR rather than a dozen.
+
+updates:
+  # ---- JavaScript / Next.js -------------------------------------------
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    groups:
+      # Next + React move together; separate PRs for them just conflict.
+      next-react:
+        patterns: ["next", "react", "react-dom", "eslint-config-next"]
+      types-and-lint:
+        patterns: ["@types/*", "eslint*", "typescript", "postcss", "tailwindcss"]
+    labels: ["dependencies", "javascript"]
+
+  # ---- Python: the DEPLOYED inference function -------------------------
+  # Kept separate from the training set on purpose. A vulnerability in
+  # something that ships inside the serverless bundle matters more than one in
+  # a training-only tool, and mixing them buries that distinction.
+  - package-ecosystem: pip
+    directory: "/api"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "python", "deployed"]
+    # scikit-learn/numpy pins must match ml/requirements.txt or the joblib
+    # bundle may fail to load. Version bumps here need the model re-verified,
+    # so they are reviewed rather than auto-merged.
+
+  # ---- Python: training-time only --------------------------------------
+  - package-ecosystem: pip
+    directory: "/ml"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "python", "training-only"]
+
+  # ---- GitHub Actions ---------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    labels: ["dependencies", "ci"]

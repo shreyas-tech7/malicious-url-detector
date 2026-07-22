@@ -203,12 +203,32 @@ create policy keepalive_anon_read
 
 -- predictions: APPEND ONLY. No select policy, deliberately -- prediction
 -- history would reveal what other people have been submitting.
+--
+-- The WITH CHECK actually checks. An earlier version used `with check (true)`,
+-- which Supabase's linter correctly flagged as "effectively bypasses
+-- row-level security" -- an INSERT policy that validates nothing is a table
+-- grant wearing a policy's clothes. The created_at bound matters
+-- particularly: without it a leaked key could backdate rows to forge a history
+-- of submissions, or post-date them to evade the 30-day retention sweep.
 drop policy if exists predictions_restricted_insert on public.predictions;
 create policy predictions_restricted_insert
   on public.predictions
   for insert
   to anon
-  with check (true);
+  with check (
+    verdict in ('malicious', 'benign', 'uncertain')
+    and (binary_verdict is null
+         or binary_verdict in ('malicious', 'benign'))
+    and score >= 0 and score <= 1
+    and (threshold is null or (threshold >= 0 and threshold <= 1))
+    and length(coalesce(url, '')) <= 2048
+    and (url_sha256 is null or url_sha256 ~ '^[a-f0-9]{64}$')
+    and (client_ip_hash is null or client_ip_hash ~ '^[a-f0-9]{64}$')
+    and length(coalesce(model_version, '')) <= 64
+    and (latency_ms is null or (latency_ms >= 0 and latency_ms < 600000))
+    and created_at > now() - interval '10 minutes'
+    and created_at <= now() + interval '1 minute'
+  );
 
 -- malicious_hashes: READ, plus INSERT/UPDATE for the refresh cron.
 -- The corpus is redistributed public threat intel from URLhaus, so read
@@ -220,35 +240,83 @@ create policy malicious_hashes_restricted_read
   to anon
   using (true);
 
--- The write policies below are a DELIBERATE TRADE-OFF, present only because
--- service_role is not available to this deployment. Stated plainly:
+-- malicious_hashes has NO write policy. The refresh writes through the
+-- SECURITY DEFINER function below instead of a table grant.
 --
---   Cost: a leaked restricted key could insert or amend rows here, i.e.
---   poison the corpus so /check-file reports false positives.
---   check_file_signature() consults Supabase BEFORE the committed local
---   snapshot, so poisoned rows would take precedence.
---
---   Bound: the sha256/md5 CHECK constraints reject anything that is not a
---   well-formed hash, so the corpus cannot be filled with arbitrary text, and
---   no DELETE policy exists, so rows cannot be removed.
---
---   Removal: supply SUPABASE_SERVICE_ROLE_KEY and DROP these two policies.
---   service_role bypasses RLS, so the refresh works with the table fully
---   closed to every other role. That is the stronger configuration.
+-- The earlier version granted anon blanket INSERT + UPDATE with
+-- `with check (true)`. Supabase's linter flagged both as bypassing RLS, and it
+-- was right: a leaked key could have written arbitrary rows, rewritten `source`
+-- to launder provenance, or amended any column. Routing writes through a
+-- validating function keeps the table itself closed and moves the rules
+-- server-side, where the caller cannot skip them.
 drop policy if exists malicious_hashes_restricted_insert on public.malicious_hashes;
-create policy malicious_hashes_restricted_insert
-  on public.malicious_hashes
-  for insert
-  to anon
-  with check (true);
-
 drop policy if exists malicious_hashes_restricted_update on public.malicious_hashes;
-create policy malicious_hashes_restricted_update
-  on public.malicious_hashes
-  for update
-  to anon
-  using (true)
-  with check (true);
+
+-- Validated bulk upsert. Enforces hash shape, caps the batch, and pins
+-- `source` so provenance cannot be forged by the caller.
+create or replace function public.upsert_malicious_hashes(p_rows jsonb)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_count integer;
+begin
+  if jsonb_typeof(p_rows) <> 'array' then
+    raise exception 'p_rows must be a JSON array';
+  end if;
+
+  -- Bounds how fast a leaked key could pollute the corpus, and keeps one call
+  -- from holding a long transaction.
+  if jsonb_array_length(p_rows) > 1000 then
+    raise exception 'batch too large: % rows (max 1000)',
+      jsonb_array_length(p_rows);
+  end if;
+
+  with incoming as (
+    select
+      lower(e ->> 'sha256')        as sha256,
+      lower(e ->> 'md5')           as md5,
+      left(e ->> 'file_type', 64)  as file_type,
+      left(e ->> 'signature', 128) as signature
+    from jsonb_array_elements(p_rows) as e
+  ),
+  valid as (
+    select distinct on (sha256) sha256, md5, file_type, signature
+    from incoming
+    where sha256 ~ '^[a-f0-9]{64}$'
+      and (md5 is null or md5 ~ '^[a-f0-9]{32}$')
+  )
+  insert into public.malicious_hashes
+        (sha256, md5, file_type, signature, source, updated_at)
+  select sha256, md5, file_type, signature,
+         'urlhaus',   -- pinned; the caller does not choose provenance
+         now()
+  from valid
+  on conflict (sha256) do update
+     set md5        = excluded.md5,
+         file_type  = excluded.file_type,
+         signature  = excluded.signature,
+         updated_at = now();
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+revoke all on function public.upsert_malicious_hashes(jsonb)
+  from public, anon, authenticated;
+grant execute on function public.upsert_malicious_hashes(jsonb) to service_role;
+-- The refresh job runs on the restricted key, which authenticates as anon.
+grant execute on function public.upsert_malicious_hashes(jsonb) to anon;
+
+-- Residual risk, stated rather than implied: a leaked restricted key can still
+-- call this function to insert well-formed but fabricated hashes, or to amend
+-- file_type/signature on an existing row. It can no longer write arbitrary
+-- columns, forge `source`, delete anything, or touch the table directly.
+-- Supplying SUPABASE_SERVICE_ROLE_KEY and revoking the anon grant above closes
+-- the remainder.
 
 -- rate_limits gets NO policy on purpose. The counter is reachable only via
 -- bump_rate_limit(), which is the entire reason that function exists. The

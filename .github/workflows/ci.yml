@@ -40,6 +40,27 @@ jobs:
         # It runs in the `live` job below instead.
         run: pytest ml/tests -q --ignore=ml/tests/test_live_deployment.py
 
+  python-audit:
+    name: Python dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pip-audit
+
+      - name: Audit the DEPLOYED dependency set
+        # Blocking. Anything vulnerable here ships inside the serverless bundle.
+        run: pip-audit -r api/requirements.txt --progress-spinner off
+
+      - name: Audit training-time dependencies
+        # Non-blocking: these never reach production, so a training-only
+        # advisory should be visible without gating a merge. The JS side gets
+        # the same treatment via --audit-level=high.
+        continue-on-error: true
+        run: pip-audit -r ml/requirements.txt --progress-spinner off
+
   node:
     name: Build, audit, bundle size
     runs-on: ubuntu-latest

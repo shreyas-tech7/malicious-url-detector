@@ -40,6 +40,7 @@ from typing import Any, Literal
 import joblib
 import numpy as np
 from fastapi import FastAPI, Header, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -105,6 +106,47 @@ app = FastAPI(
 
 _BUNDLE: dict | None = None
 _HASH_INDEX = HashIndex()
+
+#: Endpoints this function serves, used to answer 405 rather than 404 when the
+#: path is right but the method is wrong.
+_KNOWN_ROUTES: dict[str, tuple[str, ...]] = {
+    "/api/health": ("GET",),
+    "/api/predict": ("POST",),
+    "/api/check-file": ("POST",),
+    "/api/refresh-hashes": ("GET",),
+    "/health": ("GET",),
+    "/predict": ("POST",),
+    "/check-file": ("POST",),
+    "/refresh-hashes": ("GET",),
+}
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_handler(request: Request,
+                              exc: RequestValidationError) -> JSONResponse:
+    """Return validation errors WITHOUT echoing the offending input back.
+
+    FastAPI's default handler includes an `input` key containing the value that
+    failed. That means a caller who posts 500 KB in a field gets all 500 KB
+    reflected in the error body — free response amplification, and gratuitous
+    reflection of attacker-controlled bytes. Observed directly: a 2 KB
+    `header_b64` was echoed in full by the very response rejecting it for
+    exceeding 512 characters.
+
+    `type`, `loc` and `msg` are kept, so the response still tells an honest
+    caller exactly which field is wrong and why.
+    """
+    detail = [
+        {
+            "type": e.get("type"),
+            "loc": [str(p) for p in e.get("loc", [])],
+            "msg": str(e.get("msg", ""))[:200],
+        }
+        for e in exc.errors()[:10]   # cap: a fuzzer can generate many errors
+    ]
+    return JSONResponse(status_code=422,
+                        content={"error": "validation failed",
+                                 "detail": detail})
 
 
 def _load_bundle() -> dict:
@@ -291,8 +333,11 @@ def _supabase_post(path: str, payload: Any, timeout: float = 3.0,
         return None
 
 
-#: Per-instance fallback counter: {bucket: hits}. Trimmed opportunistically.
-_LOCAL_HITS: dict[str, int] = {}
+#: Per-instance fallback counter: {key: (window_start_epoch, hits)}.
+_LOCAL_HITS: dict[str, tuple[float, int]] = {}
+
+#: Length of the rate-limit window, in seconds.
+RATE_LIMIT_WINDOW_SECONDS = 60
 
 
 def _rate_limited_local(ip_hash: str) -> bool:
@@ -306,13 +351,19 @@ def _rate_limited_local(ip_hash: str) -> bool:
 
     Real limiting comes from the Supabase counter below, or from Vercel
     Firewall rate limiting at the edge.
+
+    The window is anchored to the caller's first request, not to a wall-clock
+    minute — see the note on bucket keys in `_rate_limited`.
     """
-    minute = int(time.time() // 60)
-    bucket = f"{ip_hash}:{minute}"
+    now = time.time()
     if len(_LOCAL_HITS) > 2048:
         _LOCAL_HITS.clear()  # bound memory; drops counters, never blocks
-    hits = _LOCAL_HITS.get(bucket, 0) + 1
-    _LOCAL_HITS[bucket] = hits
+
+    started, hits = _LOCAL_HITS.get(ip_hash, (now, 0))
+    if now - started >= RATE_LIMIT_WINDOW_SECONDS:
+        started, hits = now, 0        # window elapsed, start a fresh one
+    hits += 1
+    _LOCAL_HITS[ip_hash] = (started, hits)
     return hits > RATE_LIMIT_PER_MINUTE
 
 
@@ -328,9 +379,27 @@ def _rate_limited(ip_hash: str | None) -> bool:
     if _supabase_cfg() is None:
         return _rate_limited_local(ip_hash)
 
-    bucket = f"predict:{ip_hash}:{int(time.time() // 60)}"
+    # The bucket key carries NO wall-clock component.
+    #
+    # It used to be `predict:{hash}:{epoch_minute}`, which manufactured a fresh
+    # counter at every minute boundary — so a caller could spend a full budget
+    # at 11:59:59 and another at 12:00:01, reaching 2x the stated limit. The
+    # SQL function already resets on elapsed time (`window_start < now() -
+    # interval`), so removing the minute from the key is all that was needed:
+    # the window is now anchored to the caller's FIRST request and resets 60s
+    # after it, and the boundary-straddling burst is gone.
+    #
+    # This is a fixed window anchored to first use, not a true sliding window.
+    # The remaining slack is the ordinary one: a caller can spend the budget at
+    # the end of one window and again at the start of the next, so the
+    # worst-case burst over a short span approaches 2x — but only across a
+    # genuine 60s gap, not at an exploitable clock boundary. A true sliding
+    # window would need a timestamp log per caller, which is not worth the
+    # write amplification here.
+    bucket = f"predict:{ip_hash}"
     res = _supabase_post("/rest/v1/rpc/bump_rate_limit",
-                         {"p_bucket": bucket, "p_window_seconds": 60},
+                         {"p_bucket": bucket,
+                          "p_window_seconds": RATE_LIMIT_WINDOW_SECONDS},
                          want_response=True)
     if res is None:
         # Database unreachable — fall back to the local counter rather than
@@ -649,12 +718,31 @@ def fallback(full_path: str, request: Request) -> Any:
     needed to debug Vercel's routing: a rewrite may deliver either the original
     request path or the rewrite destination, and the difference decides whether
     the real routes above are reachable.
+
+    The received path is echoed back deliberately for that reason, but it is
+    truncated — it is attacker-controlled, and there is no case where a
+    multi-kilobyte path needs quoting in full.
     """
+    path = "/" + full_path
+
+    # A known path with the wrong method is 405, not 404. Without this the
+    # catch-all swallows FastAPI's method-mismatch handling and reports a
+    # perfectly valid endpoint as nonexistent.
+    allowed = _KNOWN_ROUTES.get(path)
+    if allowed and request.method not in allowed:
+        return JSONResponse(
+            status_code=405,
+            content={"error": "method not allowed",
+                     "path": path,
+                     "allowed": list(allowed)},
+            headers={"Allow": ", ".join(allowed)},
+        )
+
     return JSONResponse(
         status_code=404,
         content={
             "error": "no such endpoint",
-            "received_path": "/" + full_path,
+            "received_path": path[:200],
             "available": ["/api/health", "/api/predict", "/api/check-file",
                           "/api/refresh-hashes"],
         },

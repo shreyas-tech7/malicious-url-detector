@@ -167,14 +167,97 @@ def test_cron_endpoint_requires_authorisation():
     assert status == 401
 
 
-def test_security_headers_present():
-    """vercel.json headers must actually be applied to responses."""
-    req = urllib.request.Request(f"{BASE}/api/health")
+def _headers(path: str, extra: dict | None = None):
+    req = urllib.request.Request(f"{BASE}{path}", headers=extra or {})
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            headers = {k.lower(): v for k, v in resp.headers.items()}
+            return {k.lower(): v for k, v in resp.headers.items()}
+    except urllib.error.HTTPError as e:
+        return {k.lower(): v for k, v in e.headers.items()}
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         pytest.skip(f"live deployment unreachable ({type(e).__name__})")
 
+
+def test_security_headers_present():
+    """vercel.json headers must actually be applied to responses."""
+    headers = _headers("/api/health")
     assert headers.get("x-content-type-options") == "nosniff"
     assert headers.get("x-frame-options") == "DENY"
+
+
+def test_html_page_carries_full_header_set():
+    headers = _headers("/")
+    csp = headers.get("content-security-policy", "")
+    assert "frame-ancestors 'none'" in csp
+    assert "default-src 'self'" in csp
+    assert headers.get("referrer-policy") == "strict-origin-when-cross-origin"
+    assert "max-age=" in headers.get("strict-transport-security", "")
+    assert headers.get("permissions-policy")
+
+
+# --------------------------------------------------------------------------
+# CORS: locked by omission, and it must stay that way
+# --------------------------------------------------------------------------
+def test_no_cors_headers_for_a_foreign_origin():
+    """No Access-Control-Allow-Origin means browsers block cross-origin reads.
+
+    This service has no CORS middleware on purpose — the demo page is
+    same-origin, so nothing needs cross-origin access. Adding permissive CORS
+    later would silently open the API to any website; this test fails if that
+    happens.
+    """
+    headers = _headers("/api/health", {"Origin": "https://evil.example.com"})
+    acao = headers.get("access-control-allow-origin")
+    assert acao in (None, "", BASE), (
+        f"unexpected Access-Control-Allow-Origin: {acao!r} — the API should "
+        f"not be readable cross-origin")
+    assert headers.get("access-control-allow-credentials") is None
+
+
+# --------------------------------------------------------------------------
+# Error responses must not leak internals or reflect large inputs
+# --------------------------------------------------------------------------
+def test_validation_errors_do_not_echo_the_input_back():
+    """A rejected oversized field must not be quoted in full in the response.
+
+    FastAPI's default validation handler includes the offending value, so a
+    caller posting a large field gets it all reflected — free amplification.
+    """
+    payload = "A" * 4000
+    status, body = _request(
+        "/api/check-file",
+        {"filename": "a.pdf", "header_b64": payload},
+    )
+    assert status == 422
+    assert payload[:200] not in body, "response echoed the rejected input back"
+    assert len(body) < 2000, f"error body suspiciously large: {len(body)} bytes"
+
+
+@pytest.mark.parametrize("path,payload", [
+    ("/api/predict", '{"url": '),                 # malformed JSON
+    ("/api/predict", '{"url": {"a": 1}}'),        # wrong type
+    ("/api/predict", '[1,2,3]'),                  # array not object
+    ("/api/check-file", '{"hash": 12345}'),       # wrong type
+])
+def test_error_bodies_contain_no_internals(path, payload):
+    req = urllib.request.Request(
+        f"{BASE}{path}", data=payload.encode(),
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            body = resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        pytest.skip(f"live deployment unreachable ({type(e).__name__})")
+
+    lowered = body.lower()
+    for leak in ("traceback", "/var/task", "site-packages", "file \"",
+                 ".py\", line", "sqlstate", "psycopg", "supabase.co"):
+        assert leak not in lowered, f"error body leaked {leak!r}: {body[:300]}"
+
+
+def test_known_path_wrong_method_is_405_not_404():
+    status, body = _request("/api/predict", method="GET")
+    assert status == 405, f"expected 405, got {status}: {body[:200]}"
+    assert "allowed" in body.lower()
