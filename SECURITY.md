@@ -1,11 +1,152 @@
 # Security Audit — SENTINEL
 
-Two passes. The first was a static review of the public attack surface. The
-second (below, "Hardening pass") re-verified it against the live deployment
-after Supabase was wired up — and found that three of the first pass's
-conclusions had stopped being true.
+Three passes, newest first.
 
-Findings marked **[FIXED]** were remediated in the same pass.
+1. **Third pass** (below) — closed loose ends, narrowed database writes, and
+   extended the audit to the Python dependency tree and error paths.
+2. **Hardening pass** — re-verified the first pass against the live deployment
+   after Supabase was wired up, and found three of its conclusions no longer
+   true.
+3. **First pass** — the original static review of the public attack surface.
+
+Findings marked **[FIXED]** were remediated in the pass that found them.
+
+---
+
+## Third pass — loose ends and one more layer
+
+### Database writes narrowed past a table grant **[FIXED]**
+
+The hardening pass gave the restricted key blanket `INSERT`/`UPDATE` on
+`malicious_hashes` and an `INSERT` on `predictions`, all with
+`with check (true)`. Supabase's linter flagged all three as *"effectively
+bypasses row-level security"*, which is the correct reading: an INSERT policy
+that validates nothing is a table grant wearing a policy's clothes.
+
+Now:
+
+- `malicious_hashes` has **no write policy at all**. Writes go through
+  `upsert_malicious_hashes(jsonb)`, a `SECURITY DEFINER` function that
+  validates hash shape, caps batches at 1000, and pins `source` server-side.
+- `predictions` keeps its INSERT policy, but the check validates value ranges,
+  hash formats and field lengths, and **bounds `created_at`** — so rows cannot
+  be backdated to forge a submission history, nor post-dated to slip past the
+  30-day retention sweep.
+
+Verified against the live database rather than assumed — and the "204 means it
+worked" trap was checked twice, having already been a false alarm once:
+
+| Probe | Result |
+|---|---|
+| Direct `INSERT` on `malicious_hashes` | `42501` RLS violation |
+| `PATCH` against a row that **actually exists** | HTTP 204, row **unchanged** |
+| Full policy set (`pg_policies`) | 3 policies: 2× SELECT, 1× validated INSERT. **No UPDATE or DELETE policy on any table.** |
+| 3 malformed hashes via the function | 0 accepted |
+| 1 valid + 2 malformed | exactly 1 accepted |
+| 1500-row batch | rejected |
+| `"source": "attacker"` in payload | row still reads `source=urlhaus` |
+
+The three `rls_policy_always_true` warnings are gone. Two
+`anon_security_definer_function_executable` warnings remain and are **accepted**:
+the server runs on the restricted key, which authenticates as `anon`, and those
+two functions are precisely what it must call. Narrow validated functions
+callable by `anon` is the intended design, and is strictly better than the broad
+table grants they replaced.
+
+**Residual risk, stated plainly:** a leaked restricted key can still submit
+well-formed but fabricated hashes, or amend `file_type`/`signature` on an
+existing row. It can no longer write arbitrary columns, forge provenance, or
+delete anything. Supplying `SUPABASE_SERVICE_ROLE_KEY` and revoking the `anon`
+grant closes the rest.
+
+### The `authenticated` grant gap, confirmed closed everywhere **[VERIFIED]**
+
+The hardening pass fixed the one function the linter named. This pass checked
+**all** of them by reading the ACLs directly, on the theory that the same
+`revoke` line had probably been copy-pasted:
+
+| Function | `anon` | `authenticated` | `service_role` |
+|---|---|---|---|
+| `bump_rate_limit` | ✔ *(intended)* | ✘ | ✔ |
+| `prune_rate_limits` | ✘ | ✘ | ✔ |
+| `purge_old_predictions` | ✘ | ✘ | ✔ |
+
+### Fixed-window rate-limit burst **[FIXED]**
+
+Previously documented as a known limitation. It turned out to be a one-line
+fix: `bump_rate_limit` already resets on elapsed time, and the 2× burst came
+entirely from the *caller* embedding an epoch-minute in the bucket key, which
+manufactured a fresh counter at every wall-clock boundary. The key is now
+`predict:{hash}` with no time component, so the window is anchored to the
+caller's first request. The in-memory fallback carried the same bug and now
+tracks `(window_start, hits)`.
+
+Residual slack, stated exactly rather than hedged: spending the budget at the
+end of one window and again at the start of the next approaches 2× over a short
+span — but across a genuine 60-second gap, not at an exploitable clock tick. A
+true sliding window needs a per-caller timestamp log, which is not worth the
+write amplification here.
+
+### Validation errors echoed attacker input back **[FIXED]**
+- **Severity:** Low | **Classification:** CWE-1188 / response amplification
+
+FastAPI's default validation handler includes an `input` key containing the
+value that failed. Observed directly: a 3 KB `header_b64` was quoted **in full**
+by the very 422 rejecting it for exceeding 512 characters. Free response
+amplification and gratuitous reflection of attacker bytes.
+
+Replaced with a handler that keeps `type`/`loc`/`msg`, drops `input`/`ctx`, and
+caps at 10 errors. Also fixed the catch-all swallowing method mismatches:
+`GET /api/predict` returned 404 and now returns 405 with an `Allow` header.
+
+No error path leaks a stack trace, file path, or internal identifier — probed
+with malformed JSON, wrong types, arrays-for-objects, missing content-type and
+unknown routes, and asserted in the live suite against a leak list
+(`traceback`, `/var/task`, `site-packages`, `.py", line`, `sqlstate`, …).
+
+### Python dependencies audited **[FIXED]**
+
+Everything before this pass was `npm audit` on the JavaScript side only.
+`pip-audit` found `setuptools 79.0.1` (PYSEC-2026-3447) in the local
+environment. Not in `api/requirements.txt` and never imported at runtime —
+confirmed by AST-walking the runtime modules for `setuptools`/`pkg_resources`
+imports — but *unreachable is weaker than absent*, the same standard applied to
+`sharp`. Upgraded to 83.0.0; the environment is clean.
+
+`api/requirements.txt` and `ml/requirements.txt` were both already clean. CI now
+runs `pip-audit` on the deployed set as a **blocking** step and on the training
+set non-blocking.
+
+### Raw IPs in Vercel's platform logs — answered **[NON-ISSUE]**
+
+Two earlier attempts to check this failed and each produced a *different* wrong
+explanation for the failure while leaving the question open. Read through the
+authenticated CLI, a real runtime log record contains:
+
+```
+id, timestamp, deploymentId, projectId, level, message, source, domain,
+requestMethod, requestPath, responseStatusCode, environment, branch, cache,
+traceId, logs
+```
+
+**No client-IP field.** The documented "known gap" did not exist; PRIVACY.md is
+corrected. Scope: this is the runtime function log, not an edge/access log a
+Log Drain on a higher plan might expose.
+
+### CORS and security headers — both non-issues **[VERIFIED]**
+
+- **CORS** is locked by omission: no `Access-Control-Allow-Origin` on preflight
+  or response, so browsers block cross-origin reads entirely. Stricter than
+  "locked to the known origin". Adding CORS middleware could only loosen it, so
+  the change made was a regression test that fails if anyone adds one.
+- **Headers** were already complete from Round 1's `vercel.json` — CSP with
+  `frame-ancestors 'none'`, HSTS, `nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy`, `Permissions-Policy`. Now asserted live rather than assumed.
+
+### Dependabot enabled
+
+Split so the deployed Python set is tracked separately from training-only
+dependencies — a bundle-affecting advisory should not be buried among dev ones.
 
 ---
 

@@ -92,11 +92,19 @@ The server holds a **restricted** Supabase key (publishable/anon), not
 
 | Table | Restricted key can | Cannot |
 |---|---|---|
-| `predictions` | INSERT | **SELECT**, UPDATE, DELETE |
-| `malicious_hashes` | SELECT, INSERT, UPDATE | DELETE |
+| `predictions` | INSERT (validated) | **SELECT**, UPDATE, DELETE |
+| `malicious_hashes` | SELECT | INSERT, UPDATE, DELETE — writes go through a validating function |
 | `rate_limits` | *nothing directly* | all — reachable only via `bump_rate_limit()` |
 | `prediction_daily_stats` | nothing | all |
 | `keepalive` | SELECT | write |
+
+The full policy set is three policies: two SELECTs and one INSERT.
+**No UPDATE or DELETE policy exists on any table**, so the key the server runs
+on cannot modify or remove a single row anywhere in the database.
+
+The `predictions` INSERT check validates value ranges, hash formats and field
+lengths, and bounds `created_at` — so rows cannot be backdated to forge a
+history of submissions, nor post-dated to slip past the 30-day retention sweep.
 
 The important row is the first: **the key the server runs on cannot read back a
 single submitted URL.** It can only append.
@@ -119,27 +127,41 @@ The demo page talks only to this app's own `/scan` and `/check` routes.
 
 Stated because a privacy page that lists only the good parts is not useful.
 
-1. **Vercel's own platform logs are outside this design.** Vercel records
-   request metadata, which includes client IP, independently of what the
-   application chooses to store. Nothing in this codebase writes an IP to
-   stdout — the raw value is used only to derive the two hashes and is then
-   discarded — but the platform's request logging is not something the
-   application controls.
+1. ~~**Vercel's own platform logs record client IP.**~~ **Checked, and this was
+   wrong.** Two earlier drafts of this file listed platform logging as a known
+   gap — first blaming a plan limitation for the failed check, then a token
+   scope. Neither actually answered the question.
 
-   *This one could not be verified from this environment.* The runtime-logs API
-   returned `403 Forbidden` — because the API token in use lacks access to the
-   `shreyas-tech` team scope, **not** because of a plan limitation, which is
-   what an earlier draft of this file incorrectly claimed. Either way the logs
-   were not inspected, so the exact contents and retention of Vercel's own
-   request logging are described from Vercel's documented behaviour rather than
-   from direct observation. Treat it as unconfirmed, and check it in the Vercel
-   dashboard if it matters.
+   It has now been answered by reading a real log record through the
+   authenticated CLI. A runtime log entry for a request to this service
+   contains exactly:
 
-2. **A restricted key with write access to `malicious_hashes`** could be used
-   to poison the threat-intel corpus (false positives on `/check-file`). The
-   hash-format CHECK constraints bound what can be inserted and no DELETE
-   policy exists. Supplying `SUPABASE_SERVICE_ROLE_KEY` allows those two write
-   policies to be dropped entirely.
+   ```
+   id, timestamp, deploymentId, projectId, level, message, source, domain,
+   requestMethod, requestPath, responseStatusCode, environment, branch,
+   cache, traceId, logs
+   ```
+
+   **There is no client-IP field.** The raw address is used only to derive the
+   rate-limit key and the salted log hash, and is discarded; it does not reach
+   the platform's runtime logs either.
+
+   Scope of that check, stated precisely: this is the runtime function log a
+   project owner sees via `vercel logs`. It is not a claim about every log
+   Vercel keeps internally, nor about an edge/access log that a Log Drain on a
+   higher plan might expose. Those were not inspected.
+
+2. **Corpus poisoning is narrowed but not eliminated.** The blanket
+   INSERT/UPDATE grant on `malicious_hashes` is gone; writes now go through
+   `upsert_malicious_hashes()`, which validates hash shape, caps batches at
+   1000 and pins `source` server-side. A leaked restricted key can therefore no
+   longer write arbitrary rows, forge provenance, or delete anything.
+
+   What remains: it could still submit well-formed but fabricated hashes, or
+   amend `file_type`/`signature` on an existing row. Both are bounded and low
+   impact — they affect descriptive metadata and would produce false positives,
+   not false negatives. Supplying `SUPABASE_SERVICE_ROLE_KEY` and revoking the
+   `anon` grant on that function closes the remainder.
 
 3. **30 days is a judgement call**, not a regulatory determination. This is a
    portfolio project with no users and no legal basis analysis behind it.

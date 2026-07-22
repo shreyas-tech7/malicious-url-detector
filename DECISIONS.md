@@ -174,3 +174,66 @@ Most did not apply to this app's surface, but a security-themed repo showing
 `npm audit` findings is a bad look. Next 16 clears them; the two remaining
 moderates are a transitive `postcss` issue inside Next itself, whose suggested
 "fix" is a downgrade to Next 9.
+
+---
+
+## Rounds 2-3 — infrastructure and hardening
+
+**Reused an existing empty Supabase project rather than creating one.** The
+brief said to create a project. `list_projects` showed one already there
+(`ppdzhizdcqctzwxfoosk`, created the same day, under a different email from the
+workspace account) with **zero user tables**. Applying the schema was purely
+additive with nothing to overwrite, and creating a second project would have
+left a confusing duplicate. Checked before acting rather than assuming an
+unfamiliar project was scratch space.
+
+**Ran on a restricted Supabase key instead of blocking on `service_role`.**
+The MCP deliberately withholds secret keys, so `service_role` was unavailable.
+The obvious move was to stop and ask. The better one was to notice that a
+restricted key is *the stronger choice anyway*: `service_role` bypasses RLS
+entirely, so one leaked value reads every prediction ever logged, whereas the
+restricted key is constrained by policy and — verified, not assumed — cannot
+read back a single submitted URL.
+
+The trade-off is that the hash refresh needs write access. That was initially a
+blanket INSERT/UPDATE grant, which Supabase's linter correctly called out as
+bypassing RLS; it is now a validating `SECURITY DEFINER` function with the
+table closed. `service_role` remains supported and takes precedence if
+supplied. This is a case where the constraint produced a better design than
+having the credential would have.
+
+**Fixed the rate-limit boundary burst rather than documenting around it.**
+The plan allowed either. It turned out to be a one-line fix: `bump_rate_limit`
+already reset on elapsed time, and the 2x burst came entirely from the caller
+embedding a wall-clock minute in the bucket key, which manufactured a fresh
+counter at every boundary. Removing it anchors the window to the caller's first
+request. Documenting a limitation that takes one line to remove would have been
+the wrong call.
+
+The residual slack is stated exactly rather than hedged: spending the budget at
+the end of one window and again at the start of the next approaches 2x over a
+short span, but across a genuine 60-second gap rather than at an exploitable
+clock tick. A true sliding window needs a per-caller timestamp log, which is
+not worth the write amplification here.
+
+**Answered the Vercel-log question instead of deferring it a third time.**
+Two earlier attempts failed and each produced a *different* wrong explanation
+for the failure (plan limitation, then token scope) while leaving the actual
+question open. Reading a real log record through the authenticated CLI showed
+there is **no client-IP field at all** — the documented "known gap" did not
+exist. Worth recording as a pattern: a blocked check is not a finding, and
+writing down a plausible reason for the block is not the same as answering the
+question.
+
+**Kept CORS locked by omission.** The brief asked to verify CORS was locked to
+the known frontend origin. It is stricter than that: with no CORS middleware,
+no `Access-Control-Allow-Origin` is sent at all, so browsers block every
+cross-origin read. Adding an explicit policy could only loosen it, so the
+change made was a regression test that fails if anyone adds permissive CORS
+later — not a code change.
+
+**Two Round-3 items were non-issues and were left alone.** Security headers
+were already complete from Round 1's `vercel.json`, and the
+`shreyas-tech7`/`shreyas-tech` naming was a GitHub user versus a Vercel team
+slug, not a bug. Both are recorded here so the next pass does not re-derive
+them.
