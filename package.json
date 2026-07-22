@@ -6,7 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "check:bundle": "node scripts/check-bundle-size.mjs",
+    "audit:prod": "npm audit --omit=dev"
+  },
+  "overrides": {
+    "sharp": "^0.35.3",
+    "postcss": "^8.5.10"
   },
   "dependencies": {
     "next": "^16.2.11",
@@ -19,7 +25,7 @@
     "@types/react-dom": "^19.2.3",
     "eslint": "^10.7.0",
     "eslint-config-next": "^16.2.11",
-    "postcss": "^8",
+    "postcss": "^8.5.10",
     "tailwindcss": "^3.4.1",
     "typescript": "^5"
   }

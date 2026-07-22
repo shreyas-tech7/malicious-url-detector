@@ -1,8 +1,114 @@
-# Security Audit — SENTINEL static review
+# Security Audit — SENTINEL
 
-Static, defensive review of the public attack surface, run before calling the
-build done. Findings marked **[FIXED]** were remediated in the same pass; the
-commit that fixed them is the one that added this file.
+Two passes. The first was a static review of the public attack surface. The
+second (below, "Hardening pass") re-verified it against the live deployment
+after Supabase was wired up — and found that three of the first pass's
+conclusions had stopped being true.
+
+Findings marked **[FIXED]** were remediated in the same pass.
+
+---
+
+## Hardening pass — what changed since the first review
+
+Read this before the original findings; several of them are superseded.
+
+### Rate limiting was silently dead again **[FIXED]**
+
+The first pass fixed "no effective rate limiting" with an in-memory counter and
+verified it live (30 × 200, then 429). Wiring up Supabase **reintroduced the
+bug in a new form**:
+
+`_supabase_post` sent `Prefer: return=minimal` on every call, including the
+`bump_rate_limit` RPC whose return value is the entire point. PostgREST
+honoured it and returned an empty body, the caller read that as "database
+unavailable", and every request fell through to the per-instance in-memory
+counter. The Postgres counters were incrementing correctly the whole time —
+nothing ever read them.
+
+Diagnosed by calling the RPC directly: with the header, `Content-Length: 1`
+and an empty body; without it, `2`.
+
+Also worth recording: the first re-test of this **looked** like a pass and was
+not. 35 sequential requests returned 35 × 200, and the buckets showed 24 + 11 —
+the Supabase round-trip had slowed the loop enough to straddle a minute
+boundary, so no single window ever exceeded 30. A faster, parallel probe was
+needed to test the thing being claimed.
+
+Now verified properly: **40 parallel requests → exactly 30 × 200 and 10 × 429**,
+with the bucket recording all 40 attempts. Parallelism is what makes this
+meaningful — concurrent requests land on different instances, so an in-memory
+counter could not produce that result. The shared counter is authoritative.
+
+**Known limitation, not fixed:** the window is fixed, not sliding, so a caller
+who straddles a minute boundary can burst up to 2× the limit. That is inherent
+to fixed-window limiting and is an abuse deterrent, not a DoS control. Vercel
+Firewall rate limiting at the edge would be the answer if this ever needed to
+be one; it was not added because the Supabase counter now works across
+instances, which was the actual gap.
+
+### `npm audit` was no longer clean **[FIXED]**
+
+The first pass documented "2 moderates, non-applicable". That reasoning had
+gone stale: a **high**-severity advisory for `sharp <0.35.0` (four inherited
+libvips CVEs) had since been published against the pinned Next version.
+
+`sharp` reaches the tree only through `next`, and this app uses no
+`next/image`, so it was not reachable — but "not reachable" is a weaker claim
+than "not present". Pinning `sharp ^0.35.3` and `postcss ^8.5.10` via
+`overrides` takes the tree to **0 vulnerabilities**, production and dev, with
+the build unchanged and without npm's suggested downgrade of Next to 9.3.3.
+
+CI now runs `npm audit --omit=dev --audit-level=high` so this cannot go stale
+again unnoticed.
+
+### A `SECURITY DEFINER` grant gap the first pass missed **[FIXED]**
+
+Found by Supabase's database linter, not by the static review. The schema did
+`revoke all ... from public, anon`, which leaves the separate grant Supabase
+makes to `authenticated`, so both definer functions stayed callable over
+`/rest/v1/rpc/`. `prune_rate_limits()` is a DELETE exposed on the public REST
+API. No user accounts exist in this project, so it was never reachable — it
+would have opened the moment auth was switched on. Now revoked from every role
+and granted back explicitly.
+
+### Bundle size now has a guard **[FIXED]**
+
+Measured at **224.7 MB against Vercel's 250 MB limit — 25.3 MB of headroom**,
+tighter than the ~210 MB estimated in the first pass. `scripts/check-bundle-size.mjs`
+fails at 230 MB and runs in CI, so crossing the limit surfaces in a pull
+request rather than as a failed production deploy.
+
+### Regression tests for the bugs that unit tests could not see **[ADDED]**
+
+`ml/tests/test_live_deployment.py` — 13 integration tests against the real
+deployment, including:
+
+- `/scan` returns a verdict rather than a Deployment Protection login page
+  (the exact SSRF-fix regression, which passed every unit test and every build)
+- the production alias is reachable with no cookie or auth header
+- a non-routable host (`10.255.255.1`) and the cloud metadata address
+  (`169.254.169.254`) both return a fast, ordinary classification — behavioural
+  evidence that the service does not dereference submitted URLs
+- security headers from `vercel.json` are actually applied
+
+### Re-confirmed, unchanged
+
+- **No server path fetches a submitted URL.** The only outbound calls are to
+  Supabase (`api/index.py`, `ml/signatures.py`) and to the app's own inference
+  backend (`lib/inference.ts`). Verified statically and behaviourally.
+- **One secret comparison exists** (`CRON_SECRET`) and it uses
+  `hmac.compare_digest`. No other secret or token comparison exists in
+  first-party code.
+- **The production alias is public**, verified by unauthenticated request.
+  (Vercel's project-settings API returns 403 on this plan, so this is confirmed
+  by behaviour rather than by reading the setting.)
+
+---
+
+## First pass — static review
+
+Static, defensive review of the public attack surface.
 
 ---
 

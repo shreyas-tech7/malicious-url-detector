@@ -213,11 +213,20 @@ def _supabase_cfg() -> tuple[str, str] | None:
     return supabase_config()
 
 
-def _supabase_post(path: str, payload: Any, timeout: float = 3.0) -> Any:
+def _supabase_post(path: str, payload: Any, timeout: float = 3.0,
+                   want_response: bool = False) -> Any:
     """Minimal Supabase REST call over urllib.
 
     Deliberately not using a client library: the serverless bundle already
     carries scikit-learn and numpy, and this needs one HTTP POST.
+
+    `want_response` controls the Prefer header, and it matters more than it
+    looks. `return=minimal` makes PostgREST send an empty body — including for
+    RPC calls whose return value is the entire point. The rate limiter used to
+    send it unconditionally, so `bump_rate_limit` always came back as None, the
+    caller read that as "database unavailable", and every request quietly fell
+    through to the in-memory counter. The counters in Postgres were incrementing
+    correctly the whole time; nothing ever read them.
     """
     cfg = _supabase_cfg()
     if cfg is None:
@@ -230,7 +239,8 @@ def _supabase_post(path: str, payload: Any, timeout: float = 3.0) -> Any:
             "apikey": key,
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
-            "Prefer": "return=minimal",
+            "Prefer": "return=representation" if want_response
+                      else "return=minimal",
         },
         method="POST",
     )
@@ -283,7 +293,8 @@ def _rate_limited(ip_hash: str | None) -> bool:
 
     bucket = f"predict:{ip_hash}:{int(time.time() // 60)}"
     res = _supabase_post("/rest/v1/rpc/bump_rate_limit",
-                         {"p_bucket": bucket, "p_window_seconds": 60})
+                         {"p_bucket": bucket, "p_window_seconds": 60},
+                         want_response=True)
     if res is None:
         # Database unreachable — fall back to the local counter rather than
         # silently serving unlimited traffic.

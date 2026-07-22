@@ -1,0 +1,110 @@
+name: CI
+
+# Catches the failure modes this project has actually hit, rather than a
+# generic lint pass:
+#   - serverless bundle creeping toward Vercel's 250 MB limit (currently
+#     ~225 MB, so ~25 MB of headroom; the first symptom otherwise is a failed
+#     production deploy)
+#   - a dependency advisory appearing after the fact (a `sharp` high-severity
+#     issue showed up days after the audit that documented the tree as clean)
+#   - feature-extraction or API regressions
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  python:
+    name: Python tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'   # matches the Vercel runtime
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r ml/requirements.txt
+          pip install -r api/requirements.txt
+          pip install pytest httpx
+
+      - name: Unit tests
+        # The live-deployment suite is excluded here: it needs the production
+        # URL to be current, and a PR from a fork should not depend on it.
+        # It runs in the `live` job below instead.
+        run: pytest ml/tests -q --ignore=ml/tests/test_live_deployment.py
+
+  node:
+    name: Build, audit, bundle size
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Production dependency audit
+        # Fails on high or critical. Moderates are surfaced but do not block,
+        # because the tree has previously carried a transitive moderate whose
+        # only "fix" was downgrading Next by seven majors.
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Build
+        run: npm run build
+
+      - name: Serverless bundle size
+        # No Python venv in this job, so this reports the committed artifacts
+        # and verifies the script itself runs. The full measurement happens in
+        # the `python` job's environment and locally.
+        run: node scripts/check-bundle-size.mjs --threshold-mb 230
+
+  bundle-size:
+    name: Bundle size (with deps installed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install deploy dependencies into a venv
+        run: |
+          python -m venv ml/.venv
+          ./ml/.venv/bin/pip install --upgrade pip
+          ./ml/.venv/bin/pip install -r api/requirements.txt
+
+      - name: Check size against the Vercel limit
+        run: node scripts/check-bundle-size.mjs --threshold-mb 230
+
+  live:
+    name: Live deployment checks
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [python, node]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pytest
+
+      - name: Verify the live deployment
+        # These are the checks that caught the SSRF regression, which passed
+        # every unit test and every build. They skip (not fail) if the
+        # deployment is unreachable.
+        env:
+          LIVE_BASE_URL: https://malicious-url-detector-bice.vercel.app
+        run: pytest ml/tests/test_live_deployment.py -q
