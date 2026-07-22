@@ -38,7 +38,7 @@ def test_predict_returns_well_formed_response():
                     json={"url": "https://en.wikipedia.org/wiki/Malware"})
     assert r.status_code == 200
     body = r.json()
-    assert body["verdict"] in ("malicious", "benign")
+    assert body["verdict"] in ("malicious", "uncertain", "benign")
     assert 0.0 <= body["score"] <= 1.0
     assert body["registrable_domain"] == "wikipedia.org"
     assert body["model_version"]
@@ -243,3 +243,64 @@ def test_unknown_path_returns_json_404_not_a_stack_trace():
     r = client.get("/definitely/not/a/route")
     assert r.status_code == 404
     assert r.json()["received_path"] == "/definitely/not/a/route"
+
+
+# --------------------------------------------------------------------------
+# Uncertain band
+# --------------------------------------------------------------------------
+def test_classify_score_bands():
+    from api.index import UNCERTAIN_HIGH, UNCERTAIN_LOW, classify_score
+
+    assert classify_score(0.0) == "benign"
+    assert classify_score(UNCERTAIN_LOW - 0.001) == "benign"
+    assert classify_score(UNCERTAIN_LOW) == "uncertain"
+    assert classify_score(0.5) == "uncertain"
+    assert classify_score(UNCERTAIN_HIGH - 0.001) == "uncertain"
+    assert classify_score(UNCERTAIN_HIGH) == "malicious"
+    assert classify_score(1.0) == "malicious"
+
+
+def test_band_is_a_strict_subset_of_the_binary_call():
+    """Anything given a hard verdict must agree with the threshold call.
+
+    The band may abstain, but it must never flip a decision — a URL reported
+    `malicious` should never have been `benign` under the 0.5 threshold.
+    """
+    from api.index import DEFAULT_THRESHOLD, classify_score
+
+    for score in [i / 100 for i in range(101)]:
+        v = classify_score(score)
+        if v == "malicious":
+            assert score >= DEFAULT_THRESHOLD
+        elif v == "benign":
+            assert score < DEFAULT_THRESHOLD
+
+
+def test_predict_exposes_band_and_binary_verdict():
+    r = client.post("/api/predict",
+                    json={"url": "https://en.wikipedia.org/wiki/Malware"})
+    body = r.json()
+    assert body["binary_verdict"] in ("malicious", "benign")
+    assert body["uncertain_band"] == [0.2, 0.8]
+
+
+def test_uncertain_response_explains_itself():
+    """An `uncertain` verdict must say what that means, not just label it."""
+    from api.index import UNCERTAIN_HIGH, UNCERTAIN_LOW
+
+    # Search a handful of shapes for one that lands mid-band, rather than
+    # pinning a specific URL whose score could drift on retrain.
+    candidates = [
+        "https://clinicadental-sanchez.es/tratamientos/implantes",
+        "https://www.tandoori-palace.co.uk/menu/starters.php",
+        "http://www.parish-council.gov.uk/minutes/2019/march.php?id=44",
+        "https://joes-plumbing-dallas.com/services/emergency-repair",
+        "https://smallbakery.co.nz/our-menu/gluten-free",
+    ]
+    for url in candidates:
+        body = client.post("/api/predict", json={"url": url}).json()
+        if UNCERTAIN_LOW <= body["score"] < UNCERTAIN_HIGH:
+            assert body["verdict"] == "uncertain"
+            assert "second look" in body["disclaimer"]
+            return
+    pytest.skip("no candidate landed in the uncertain band for this model")

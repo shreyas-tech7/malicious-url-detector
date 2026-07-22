@@ -8,15 +8,50 @@ type Contribution = {
   contribution: number;
 };
 
+type Verdict = 'malicious' | 'uncertain' | 'benign';
+
 type ScanResult = {
   url: string;
-  verdict: 'malicious' | 'benign';
+  verdict: Verdict;
+  binary_verdict: 'malicious' | 'benign';
   score: number;
   threshold: number;
+  uncertain_band: [number, number];
   model_version: string;
   registrable_domain: string;
   top_features: Contribution[];
   disclaimer: string;
+};
+
+/**
+ * Styling per verdict. `uncertain` is amber rather than red or green on
+ * purpose: the point is that the model declined to call it, and either
+ * confident colour would overstate what it knows.
+ */
+const VERDICT_STYLES: Record<Verdict, {
+  label: string;
+  card: string;
+  text: string;
+  bar: string;
+}> = {
+  malicious: {
+    label: 'Likely malicious',
+    card: 'border-red-900/70 bg-red-950/30',
+    text: 'text-red-300',
+    bar: 'bg-red-500',
+  },
+  uncertain: {
+    label: 'Uncertain — worth a second look',
+    card: 'border-amber-900/70 bg-amber-950/25',
+    text: 'text-amber-300',
+    bar: 'bg-amber-500',
+  },
+  benign: {
+    label: 'Likely benign',
+    card: 'border-emerald-900/70 bg-emerald-950/25',
+    text: 'text-emerald-300',
+    bar: 'bg-emerald-500',
+  },
 };
 
 const EXAMPLES = [
@@ -59,7 +94,7 @@ export default function Home() {
     }
   }
 
-  const malicious = result?.verdict === 'malicious';
+  const style = result ? VERDICT_STYLES[result.verdict] : null;
 
   return (
     <main className="mx-auto min-h-screen max-w-3xl px-6 py-12">
@@ -121,36 +156,42 @@ export default function Home() {
         </div>
       )}
 
-      {result && (
+      {result && style && (
         <section className="mt-8 space-y-5">
-          <div
-            className={`rounded-xl border px-5 py-5 ${
-              malicious
-                ? 'border-red-900/70 bg-red-950/30'
-                : 'border-emerald-900/70 bg-emerald-950/25'
-            }`}
-          >
+          <div className={`rounded-xl border px-5 py-5 ${style.card}`}>
             <div className="flex items-baseline justify-between gap-4">
-              <span
-                className={`text-xl font-semibold ${
-                  malicious ? 'text-red-300' : 'text-emerald-300'
-                }`}
-              >
-                {malicious ? 'Likely malicious' : 'Likely benign'}
+              <span className={`text-xl font-semibold ${style.text}`}>
+                {style.label}
               </span>
               <span className="font-mono text-sm text-slate-400">
                 {(result.score * 100).toFixed(1)}%
               </span>
             </div>
 
-            <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+            <div className="relative mt-4 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+              {/* The uncertain band, drawn so the score can be read against it. */}
               <div
-                className={
-                  malicious ? 'h-full bg-red-500' : 'h-full bg-emerald-500'
-                }
+                className="absolute inset-y-0 bg-slate-700/70"
+                style={{
+                  left: `${result.uncertain_band[0] * 100}%`,
+                  width: `${
+                    (result.uncertain_band[1] - result.uncertain_band[0]) * 100
+                  }%`,
+                }}
+              />
+              <div
+                className={`relative h-full ${style.bar}`}
                 style={{ width: `${Math.round(result.score * 100)}%` }}
               />
             </div>
+
+            {result.verdict === 'uncertain' && (
+              <p className="mt-3 text-xs leading-relaxed text-amber-200/80">
+                This score sits between {result.uncertain_band[0]} and{' '}
+                {result.uncertain_band[1]}, where about two thirds of the
+                model&apos;s mistakes occur. It is not a verdict.
+              </p>
+            )}
 
             <dl className="mt-4 grid gap-1 text-xs text-slate-400 sm:grid-cols-2 sm:gap-x-6">
               <div className="flex justify-between gap-4">

@@ -65,6 +65,37 @@ MAX_HEADER_SAMPLE_BYTES = 64   # enough for any magic number we check
 DEFAULT_THRESHOLD = float(os.environ.get("PREDICT_THRESHOLD", "0.5"))
 RATE_LIMIT_PER_MINUTE = int(os.environ.get("RATE_LIMIT_PER_MINUTE", "30"))
 
+# --- "uncertain" band -----------------------------------------------------
+# Scores between these bounds are reported as `uncertain` rather than forced
+# into a binary call.
+#
+# The bounds are measured, not guessed. On the held-out set the score
+# distribution is strongly bimodal: 39.5% of predictions land below 0.05 and
+# 33.3% above 0.95, and those confident regions are right ~99% of the time.
+# The errors sit in the middle:
+#
+#   band          share of traffic   share of all errors
+#   [0.20, 0.80)        14.1%               65.9%
+#
+# So abstaining on 14% of inputs removes two thirds of the mistakes, and the
+# error rate on everything still given a hard verdict falls from 7.7% to 3.04%.
+#
+# This is a presentation change, not a model change. Two rounds of feature
+# engineering in this project each fixed one false-positive class and created
+# another; declining to answer where the model is genuinely unsure is a more
+# honest response than a third round.
+UNCERTAIN_LOW = float(os.environ.get("UNCERTAIN_LOW", "0.20"))
+UNCERTAIN_HIGH = float(os.environ.get("UNCERTAIN_HIGH", "0.80"))
+
+
+def classify_score(score: float) -> str:
+    """Map a probability to malicious / uncertain / benign."""
+    if score >= UNCERTAIN_HIGH:
+        return "malicious"
+    if score < UNCERTAIN_LOW:
+        return "benign"
+    return "uncertain"
+
 app = FastAPI(
     title="Malicious URL & File-Signature Detector",
     version="1.0.0",
@@ -128,9 +159,15 @@ class FeatureContribution(BaseModel):
 
 class PredictResponse(BaseModel):
     url: str
-    verdict: Literal["malicious", "benign"]
+    #: Three-valued. `uncertain` means the model declined to call it rather
+    #: than that it scored exactly 0.5 — see UNCERTAIN_LOW/HIGH.
+    verdict: Literal["malicious", "uncertain", "benign"]
+    #: The strict >= threshold call, kept so callers that need a binary
+    #: decision are not forced to re-derive it from the score.
+    binary_verdict: Literal["malicious", "benign"]
     score: float
     threshold: float
+    uncertain_band: list[float]
     model_version: str
     registrable_domain: str
     top_features: list[FeatureContribution]
@@ -440,7 +477,8 @@ def predict(
 
     x = _vectorise(bundle, body.url)
     score = float(bundle["model"].predict_proba(x.reshape(1, -1))[0, 1])
-    verdict = "malicious" if score >= DEFAULT_THRESHOLD else "benign"
+    verdict = classify_score(score)
+    binary_verdict = "malicious" if score >= DEFAULT_THRESHOLD else "benign"
     top = _explain(bundle, x, score)
 
     _log_prediction(
@@ -449,6 +487,7 @@ def predict(
         url=_redact_url(body.url),
         url_sha256=hashlib.sha256(body.url.encode()).hexdigest(),
         verdict=verdict,
+        binary_verdict=binary_verdict,
         score=round(score, 6),
         model_version=bundle.get("model_version", "unknown"),
         threshold=DEFAULT_THRESHOLD,
@@ -457,19 +496,29 @@ def predict(
         latency_ms=int((time.time() - started) * 1000),
     )
 
+    disclaimer = (
+        "Classification is based on the URL string alone. The service did not "
+        "fetch or open this URL. Not a substitute for a security product."
+    )
+    if verdict == "uncertain":
+        disclaimer = (
+            f"This URL scored {score:.2f}, inside the model's uncertain band "
+            f"({UNCERTAIN_LOW}-{UNCERTAIN_HIGH}). Roughly two thirds of the "
+            f"model's mistakes fall in this range, so treat it as 'worth a "
+            f"second look' rather than a verdict. " + disclaimer
+        )
+
     return {
         "url": body.url,
         "verdict": verdict,
+        "binary_verdict": binary_verdict,
         "score": round(score, 4),
         "threshold": DEFAULT_THRESHOLD,
+        "uncertain_band": [UNCERTAIN_LOW, UNCERTAIN_HIGH],
         "model_version": bundle.get("model_version", "unknown"),
         "registrable_domain": registrable_domain(body.url),
         "top_features": top,
-        "disclaimer": (
-            "Classification is based on the URL string alone. The service did "
-            "not fetch or open this URL. Not a substitute for a security "
-            "product."
-        ),
+        "disclaimer": disclaimer,
     }
 
 

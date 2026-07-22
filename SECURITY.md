@@ -110,6 +110,11 @@ deployment, including:
 
 Static, defensive review of the public attack surface.
 
+> **Historical record.** Statements below about Supabase being unconfigured, or
+> about the in-memory limiter being the active mechanism, were true when this
+> section was written and are **superseded by the hardening pass above**.
+> Supabase is now configured and the shared counter is authoritative.
+
 ---
 
 ## Executive Summary
@@ -411,18 +416,28 @@ Stated because an audit that only lists problems is not an accurate picture:
 
 ## Systemic Recommendations
 
-1. **Put real rate limiting at the edge.** Enable Vercel Firewall rate limiting,
-   or configure Supabase so the shared counter is authoritative. The in-memory
-   fallback should not be the primary control.
-2. **Configure Supabase or remove the code paths.** Logging, durable rate
-   limiting and the hash refresh are all currently inert. Inert security code
-   rots and gives false assurance.
+1. ~~**Put real rate limiting at the edge.**~~ **Done in the hardening pass** —
+   the Supabase counter is now authoritative and verified across concurrent
+   instances. Vercel Firewall remains the answer if this ever needs to be a DoS
+   control rather than an abuse deterrent.
+2. ~~**Configure Supabase or remove the code paths.**~~ **Done** — logging,
+   durable rate limiting and the hash refresh are all live and verified against
+   the database. Two of the three were silently broken when first switched on,
+   which is precisely the "inert security code rots" failure this
+   recommendation anticipated.
 3. **Consider dropping the `url` column entirely** and keeping only
-   `url_sha256`. Redaction is good; not storing the value is better.
-4. **Add secret scanning and dependency review to CI** (`gitleaks`, Dependabot).
-   Nothing here is committed today, but the repo carries `.env.example` and a
-   Supabase schema that invite mistakes.
+   `url_sha256`. Partially addressed: the query string is now stripped before
+   storage. Not storing the path either would be stronger.
+4. ~~**Add secret scanning and dependency review to CI.**~~ **Partially done** —
+   CI now runs `npm audit --omit=dev --audit-level=high`. Secret scanning
+   (`gitleaks`) and Dependabot are still worth adding; the pip side has no
+   automated audit at all.
 5. **Add a nonce-based CSP** if the demo page ever renders anything richer.
+6. **Supply `SUPABASE_SERVICE_ROLE_KEY`** and drop the two
+   `malicious_hashes` write policies. The restricted key is the better default
+   for the read/append paths, but the hash refresh needs write access, and that
+   is the one place where a leaked restricted key could do real damage
+   (corpus poisoning).
 
 ---
 

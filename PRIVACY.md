@@ -126,10 +126,14 @@ Stated because a privacy page that lists only the good parts is not useful.
    discarded — but the platform's request logging is not something the
    application controls.
 
-   *This one could not be verified from this environment*: the runtime-logs API
-   returned `403 Forbidden` on the current plan, so the exact contents and
-   retention of Vercel's logs are documented from Vercel's behaviour rather
-   than from direct inspection. Treat it as unconfirmed.
+   *This one could not be verified from this environment.* The runtime-logs API
+   returned `403 Forbidden` — because the API token in use lacks access to the
+   `shreyas-tech` team scope, **not** because of a plan limitation, which is
+   what an earlier draft of this file incorrectly claimed. Either way the logs
+   were not inspected, so the exact contents and retention of Vercel's own
+   request logging are described from Vercel's documented behaviour rather than
+   from direct observation. Treat it as unconfirmed, and check it in the Vercel
+   dashboard if it matters.
 
 2. **A restricted key with write access to `malicious_hashes`** could be used
    to poison the threat-intel corpus (false positives on `/check-file`). The

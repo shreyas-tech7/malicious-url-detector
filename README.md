@@ -15,11 +15,18 @@ It is explicitly not a production security control; see
 
 | Endpoint | Input | Output |
 |---|---|---|
-| `POST /scan` | `{"url": "..."}` | verdict, score, per-prediction feature attributions |
+| `POST /scan` | `{"url": "..."}` | `malicious` / `uncertain` / `benign`, score, per-prediction feature attributions |
 | `POST /check` | `{"hash": "...", "filename": "...", "header_b64": "..."}` | known-bad hash lookup + static metadata findings |
-| `GET /api/health` | — | model version, feature count, hash-table size |
+| `GET /api/health` | — | model version, feature count, hash-table size, Supabase key kind |
 
 A minimal demo page at `/` lets you paste a URL and see the verdict.
+
+Companion documents:
+[EVALUATION.md](ml/reports/EVALUATION.md) (measured performance and
+limitations) · [SECURITY.md](SECURITY.md) (two audit passes and their fixes) ·
+[PRIVACY.md](PRIVACY.md) (what is stored, for how long, who can read it) ·
+[DATA_SOURCES.md](DATA_SOURCES.md) (every dataset and its terms) ·
+[DECISIONS.md](DECISIONS.md) (judgement calls and why).
 
 ---
 
@@ -109,8 +116,45 @@ training**:
 | F1 | 0.9174 |
 | PR-AUC | 0.9795 |
 
-Precision is tunable upward: the threshold sweep reaches 0.985 precision at
-0.768 recall (t=0.90), and 0.999 at 0.547 recall (t=0.99).
+### That 0.92 does not survive contact with a realistic base rate
+
+Precision is a function of prevalence, and the evaluation set is **46.6%
+malicious by construction**. Real traffic is overwhelmingly benign. Applying
+Bayes' rule to the *measured* TPR and FPR:
+
+```
+precision = (p x TPR) / (p x TPR + (1 - p) x FPR)
+```
+
+| Threshold | FPR | p=0.5% | p=1% | p=5% | p=10% | p=46.6% (this eval) |
+|---|---|---|---|---|---|---|
+| 0.50 | 0.0670 | 0.064 | **0.121** | 0.418 | 0.602 | **0.922** |
+| 0.70 | 0.0387 | 0.101 | 0.185 | 0.541 | 0.714 | 0.951 |
+| 0.80 | 0.0240 | 0.148 | 0.259 | 0.646 | 0.794 | 0.968 |
+| 0.90 | 0.0101 | 0.276 | 0.434 | 0.800 | 0.894 | 0.985 |
+| 0.95 | 0.0055 | 0.391 | 0.564 | 0.871 | 0.934 | 0.991 |
+| 0.99 | 0.0004 | 0.878 | **0.935** | 0.987 | 0.994 | 0.999 |
+
+**At the default threshold and a 1% true malicious rate, precision is 0.121** —
+about seven false alarms per real detection. That is not a flaw in the model;
+it is what a 6.7% false-positive rate does when negatives outnumber positives
+99 to 1.
+
+The threshold is the lever, and the table shows it working: at t=0.99 the
+false-positive rate falls to 0.0004, lifting precision at a 1% base rate to
+**0.935**, at the cost of recall (0.547 vs 0.912). Any real deployment should
+pick its operating point from this table and its own prevalence estimate, not
+from the headline number.
+
+### Verdicts are three-valued, not binary
+
+Scores in **[0.20, 0.80)** are reported as `uncertain — worth a second look`
+rather than forced into a call. The bounds are measured, not chosen: that band
+is **14.1% of traffic but contains 65.9% of the model's errors**, so abstaining
+there drops the error rate on the verdicts that *are* given from 7.7% to 3.04%.
+
+The response also carries `binary_verdict` for callers that need a hard
+decision.
 
 ### Why the split matters
 
@@ -228,15 +272,23 @@ them**, falling back to the committed local hash table and skipping logging.
 
 | Variable | Purpose |
 |---|---|
-| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Hash table, prediction log, rate limiting. Server-side only. |
-| `SUPABASE_ANON_KEY` | Keep-alive GitHub Action. |
+| `SUPABASE_URL` | Project URL. |
+| `SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_ANON_KEY` | The **restricted** key the server runs on. Constrained by RLS: it can append to the prediction log but cannot read it back. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Optional and **preferred if you have it** — takes precedence. Bypasses RLS, so the two `malicious_hashes` write policies can then be dropped. |
 | `IP_HASH_SALT` | Salts the SHA-256 of client IPs. Without it, **no IP is logged at all** rather than logging a reversible digest. |
 | `CRON_SECRET` | Authorises `GET /api/refresh-hashes`. |
 | `URLHAUS_AUTH_KEY` | Optional; the bulk dumps used here do not need it. |
 | `INFERENCE_BASE_URL` | Override the gateway's backend target. |
+| `UNCERTAIN_LOW` / `UNCERTAIN_HIGH` | Bounds of the uncertain band (default 0.20 / 0.80). |
 
-No secret is `NEXT_PUBLIC_*`. Apply `supabase/schema.sql` in the Supabase SQL
-editor — it is idempotent and enables RLS deny-by-default on every table.
+No secret is `NEXT_PUBLIC_*`; no Supabase key of any kind reaches the browser.
+Apply `supabase/schema.sql` in the Supabase SQL editor — it is idempotent,
+enables RLS deny-by-default on every table, and schedules retention via
+`pg_cron`.
+
+All credential resolution goes through `ml/supabase_cfg.py`. Reading
+`SUPABASE_*` directly anywhere else is a test failure — three copies of that
+logic previously drifted and silently disabled hash lookups.
 
 ---
 
@@ -245,11 +297,12 @@ editor — it is idempotent and enables RLS deny-by-default on every table.
 The full list is in [`ml/reports/EVALUATION.md`](ml/reports/EVALUATION.md). The
 ones that matter most:
 
-1. **The ~50/50 evaluation balance is not the real-world base rate.** Real
-   traffic is overwhelmingly benign, and precision falls as the positive class
-   gets rarer. At a 1% true malicious rate this model's precision would be far
-   below 0.92. These numbers describe discrimination ability, not deployed
-   performance.
+1. **The 46.6% evaluation balance is not the real-world base rate.** This is no
+   longer a hand-wave — see the table above. At a 1% true malicious rate and
+   the default threshold, precision is **0.121**, not 0.92. The headline number
+   describes discrimination ability, not deployed performance, and the
+   threshold has to be raised substantially for the tool to be useful at
+   realistic prevalence.
 
 2. **Threat feeds are a biased sample of malice.** URLhaus and OpenPhish contain
    URLs that were *detected and reported*. Anything that evades detection is by
@@ -257,10 +310,14 @@ ones that matter most:
    lower than measured.
 
 3. **Legitimate hyphenated non-English domains still false-positive.**
-   `clinicadental-sanchez.es` scores ~0.91. This is close to the ceiling of
-   string-only classification: nothing in the URL distinguishes a Spanish dental
-   clinic from an impersonation of one. Fixing it needs domain reputation or
-   registration age — signals outside the string.
+   `clinicadental-sanchez.es` scores ~0.91 — above the uncertain band, so it
+   gets a confident wrong answer rather than an abstention. This is close to
+   the ceiling of string-only classification: nothing in the URL distinguishes
+   a Spanish dental clinic from an impersonation of one. Fixing it needs domain
+   reputation or registration age — signals outside the string. The uncertain
+   band helps the borderline cases (a restaurant's `/menu/starters.php` at
+   0.652 is now `uncertain` rather than `malicious`) but cannot help where the
+   model is confidently wrong.
 
 4. **Static analysis only.** The classifier sees the URL string. A malicious page
    on a clean-looking URL, or a compromised legitimate site, is invisible to it.

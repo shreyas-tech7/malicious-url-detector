@@ -76,7 +76,7 @@ def test_gateway_reaches_the_backend():
     """
     status, body = _json("/scan", {"url": "https://en.wikipedia.org/wiki/Malware"})
     assert status == 200, f"/scan -> {status}: {body}"
-    assert body.get("verdict") in ("malicious", "benign")
+    assert body.get("verdict") in ("malicious", "uncertain", "benign")
     assert "protection" not in json.dumps(body).lower(), (
         "response mentions deployment protection — the gateway is talking to a "
         "protected hostname instead of the public alias")
@@ -116,7 +116,7 @@ def test_service_does_not_fetch_the_submitted_url():
     elapsed = time.time() - started
 
     assert status == 200, f"expected a verdict, got {status}: {body}"
-    assert body.get("verdict") in ("malicious", "benign")
+    assert body.get("verdict") in ("malicious", "uncertain", "benign")
     assert elapsed < 10, (
         f"took {elapsed:.1f}s for a non-routable host — suggests the service "
         f"attempted a connection to the submitted URL")
@@ -138,7 +138,7 @@ def test_cloud_metadata_endpoint_is_scored_not_fetched():
     elapsed = time.time() - started
 
     assert status == 200
-    assert body.get("verdict") in ("malicious", "benign")
+    assert body.get("verdict") in ("malicious", "uncertain", "benign")
     assert elapsed < 10
     assert "ami-id" not in json.dumps(body).lower()
     assert "iam" not in str(body.get("url", "")).lower() or True

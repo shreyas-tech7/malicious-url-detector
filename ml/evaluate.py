@@ -154,24 +154,67 @@ def importances(res, top: int = 15) -> list[dict]:
 
 
 def threshold_sweep(y, proba) -> list[dict]:
-    """Precision/recall across thresholds.
+    """Precision/recall/TPR/FPR across thresholds.
 
     A detector is usually tuned for precision — a false positive means telling
     a user a legitimate link is malicious, which burns trust fast.
+
+    TPR and FPR are recorded because they are the threshold-dependent,
+    prevalence-INDEPENDENT quantities. Precision is not: it moves with the base
+    rate, which is what `base_rate_table` below makes concrete.
     """
-    prec, rec, thr = precision_recall_curve(y, proba)
     rows = []
     for t in (0.5, 0.7, 0.8, 0.9, 0.95, 0.99):
         pred = (proba >= t).astype(int)
         if pred.sum() == 0:
             continue
+        tn, fp, fn, tp = confusion_matrix(y, pred, labels=[0, 1]).ravel()
         rows.append({
             "threshold": t,
             "precision": float(precision_score(y, pred, zero_division=0)),
             "recall": float(recall_score(y, pred, zero_division=0)),
+            "tpr": float(tp / (tp + fn)) if (tp + fn) else 0.0,
+            "fpr": float(fp / (fp + tn)) if (fp + tn) else 0.0,
             "flagged": int(pred.sum()),
         })
     return rows
+
+
+#: Assumed real-world malicious rates. The evaluation set is ~47% malicious by
+#: construction, which is nothing like live traffic.
+PREVALENCES = (0.001, 0.005, 0.01, 0.05, 0.10)
+
+
+def base_rate_table(sweep: list[dict], eval_prevalence: float) -> dict:
+    """Precision at realistic base rates, by Bayes' rule.
+
+    precision = (p * TPR) / (p * TPR + (1 - p) * FPR)
+
+    Why this matters more than any other number in the report: precision is a
+    function of prevalence, and the headline 0.92 is measured on a set that is
+    ~47% malicious. Real traffic is overwhelmingly benign. At a 1% true rate
+    the same model, unchanged, at the same threshold, yields precision near
+    0.12 — roughly seven false alarms for every real detection.
+
+    Reported across thresholds as well as prevalences, because raising the
+    threshold is the actual lever: it trades recall for a lower FPR, and at low
+    prevalence FPR is what dominates.
+    """
+    rows = []
+    for s in sweep:
+        tpr, fpr = s["tpr"], s["fpr"]
+        entry = {"threshold": s["threshold"], "tpr": tpr, "fpr": fpr,
+                 "precision_at": {}}
+        for p in PREVALENCES:
+            denom = p * tpr + (1 - p) * fpr
+            entry["precision_at"][str(p)] = float(p * tpr / denom) if denom else 0.0
+        denom = eval_prevalence * tpr + (1 - eval_prevalence) * fpr
+        entry["precision_at"][f"{eval_prevalence:.4f}"] = (
+            float(eval_prevalence * tpr / denom) if denom else 0.0)
+        rows.append(entry)
+    return {"eval_prevalence": eval_prevalence,
+            "prevalences": list(PREVALENCES),
+            "rows": rows}
 
 
 def per_source_recall(res, proba) -> dict:
@@ -258,6 +301,15 @@ def main() -> int:
         print(f"  t={r['threshold']:.2f}  precision={r['precision']:.4f}  "
               f"recall={r['recall']:.4f}  flagged={r['flagged']:,}")
 
+    eval_prev = float(headline_res.y_test.mean())
+    base_rates = base_rate_table(sweep, eval_prev)
+
+    print(f"\nbase-rate precision (eval prevalence {eval_prev:.1%}):")
+    for r in base_rates["rows"]:
+        cells = "  ".join(
+            f"{p:>6.1%}:{r['precision_at'][str(p)]:.3f}" for p in PREVALENCES)
+        print(f"  t={r['threshold']:.2f} fpr={r['fpr']:.4f}  {cells}")
+
     metrics = {
         "generated_at": pd.Timestamp.now("UTC").isoformat(),
         "dataset_stats": dataset_stats,
@@ -265,6 +317,7 @@ def main() -> int:
         "leakage_audit": audit,
         "permutation_importance": imps,
         "threshold_sweep": sweep,
+        "base_rate_precision": base_rates,
         "per_source": by_source,
         "error_samples": errors,
     }
@@ -356,6 +409,57 @@ def write_report(m: dict) -> None:
         "|---|---|---|",
         f"| **actually benign** | {c['tn']:,} | {c['fp']:,} |",
         f"| **actually malicious** | {c['fn']:,} | {c['tp']:,} |",
+        "",
+        "## What that precision means at a realistic base rate",
+        "",
+        "**Read this before quoting 0.92 anywhere.** Precision is a function of "
+        "prevalence, and the evaluation set is "
+        f"**{m['base_rate_precision']['eval_prevalence']:.1%} malicious by "
+        "construction**. Real traffic is overwhelmingly benign.",
+        "",
+        "Applying Bayes' rule to the *measured* TPR and FPR from the confusion "
+        "matrix above:",
+        "",
+        "```",
+        "precision = (p x TPR) / (p x TPR + (1 - p) x FPR)",
+        "```",
+        "",
+        "TPR and FPR are properties of the model at a given threshold and do "
+        "not move with prevalence. Precision does. The same model, unchanged, "
+        "at each assumed real-world malicious rate:",
+        "",
+    ]
+
+    br = m["base_rate_precision"]
+    prevs = br["prevalences"]
+    header = "| Threshold | FPR | " + " | ".join(f"p={p:.1%}" for p in prevs) \
+             + f" | p={br['eval_prevalence']:.1%} (this eval) |"
+    lines += [header, "|---" * (len(prevs) + 3) + "|"]
+    for r in br["rows"]:
+        cells = " | ".join(f"{r['precision_at'][str(p)]:.3f}" for p in prevs)
+        evalcell = r["precision_at"][f"{br['eval_prevalence']:.4f}"]
+        lines.append(
+            f"| {r['threshold']:.2f} | {r['fpr']:.4f} | {cells} | "
+            f"**{evalcell:.3f}** |")
+
+    row50 = next(r for r in br["rows"] if r["threshold"] == 0.5)
+    row99 = next(r for r in br["rows"] if r["threshold"] == 0.99)
+    lines += [
+        "",
+        f"**At the default 0.5 threshold and a 1% true malicious rate, "
+        f"precision is {row50['precision_at']['0.01']:.3f}** — roughly "
+        f"{(1 - row50['precision_at']['0.01']) / max(row50['precision_at']['0.01'], 1e-9):.0f} "
+        "false alarms for every real detection. That is not a defect in the "
+        "model; it is what a 6.7% false-positive rate does when negatives "
+        "outnumber positives 99 to 1.",
+        "",
+        "The lever is the threshold, and the table shows it working: at "
+        f"t=0.99 the false-positive rate falls to {row99['fpr']:.4f}, which "
+        f"lifts precision at a 1% base rate to "
+        f"{row99['precision_at']['0.01']:.3f} — at the cost of recall "
+        f"({row99['tpr']:.3f} vs {row50['tpr']:.3f}). Any real deployment "
+        "should pick its operating point from this table and its own estimate "
+        "of prevalence, not from the headline number.",
         "",
         "## Configuration comparison",
         "",
