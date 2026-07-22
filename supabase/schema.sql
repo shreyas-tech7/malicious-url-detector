@@ -253,3 +253,84 @@ create policy malicious_hashes_restricted_update
 -- rate_limits gets NO policy on purpose. The counter is reachable only via
 -- bump_rate_limit(), which is the entire reason that function exists. The
 -- table stays fully closed so buckets cannot be read or cleared directly.
+
+-- ---------------------------------------------------------------------------
+-- Retention. See PRIVACY.md.
+--
+-- Raw submissions accumulate forever by default, which is the wrong default
+-- for a service whose input is "URLs somebody found suspicious" -- that corpus
+-- only gets more sensitive as it grows. Rows are rolled up into day/verdict
+-- aggregates and then deleted after 30 days.
+--
+-- Scheduled with pg_cron INSIDE the database rather than in the application,
+-- so expiry does not depend on the app being invoked, on Vercel Cron firing,
+-- or on anyone remembering to run it.
+-- ---------------------------------------------------------------------------
+create extension if not exists pg_cron with schema cron;
+
+-- Aggregates only: a date, a verdict, and counts. No URL, no hash, no
+-- IP-derived value. Safe to keep indefinitely.
+create table if not exists public.prediction_daily_stats (
+  day            date not null,
+  verdict        text not null,
+  model_version  text not null,
+  n              integer not null,
+  avg_score      double precision,
+  p95_latency_ms integer,
+  primary key (day, verdict, model_version)
+);
+
+alter table public.prediction_daily_stats enable row level security;
+
+-- Rolls up everything past the cutoff, then deletes it. Re-runnable: the
+-- rollup upserts, so a repeated run cannot double-count.
+create or replace function public.purge_old_predictions(
+  p_retain_days integer default 30
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_cutoff timestamptz := now() - make_interval(days => p_retain_days);
+  v_deleted integer;
+begin
+  insert into public.prediction_daily_stats
+        (day, verdict, model_version, n, avg_score, p95_latency_ms)
+  select date_trunc('day', created_at)::date,
+         verdict,
+         model_version,
+         count(*)::int,
+         avg(score),
+         percentile_disc(0.95) within group (order by latency_ms)::int
+  from public.predictions
+  where created_at < v_cutoff
+  group by 1, 2, 3
+  on conflict (day, verdict, model_version) do update
+     set n              = excluded.n,
+         avg_score      = excluded.avg_score,
+         p95_latency_ms = excluded.p95_latency_ms;
+
+  delete from public.predictions where created_at < v_cutoff;
+  get diagnostics v_deleted = row_count;
+
+  return v_deleted;
+end;
+$$;
+
+revoke all on function public.purge_old_predictions(integer)
+  from public, anon, authenticated;
+grant execute on function public.purge_old_predictions(integer) to service_role;
+
+-- Daily at 03:40 UTC, hourly for the transient rate-limit buckets. Off the
+-- hour deliberately.
+select cron.unschedule('purge-old-predictions')
+  where exists (select 1 from cron.job where jobname = 'purge-old-predictions');
+select cron.schedule('purge-old-predictions', '40 3 * * *',
+                     $$select public.purge_old_predictions(30);$$);
+
+select cron.unschedule('prune-rate-limits')
+  where exists (select 1 from cron.job where jobname = 'prune-rate-limits');
+select cron.schedule('prune-rate-limits', '15 * * * *',
+                     $$select public.prune_rate_limits();$$);
