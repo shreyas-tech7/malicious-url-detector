@@ -9,7 +9,7 @@
 # is tied to the versions that produced it: a mismatch either fails to unpickle
 # or, worse, loads and scores subtly wrong.
 
-fastapi==0.139.2
+fastapi==0.141.1
 scikit-learn==1.9.0
 numpy==2.4.6
 scipy==1.17.1
