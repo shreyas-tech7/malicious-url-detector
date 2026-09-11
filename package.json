@@ -12,7 +12,7 @@
     "audit:prod": "npm audit --omit=dev"
   },
   "overrides": {
-    "sharp": "^0.35.3",
+    "sharp": "^0.35.4",
     "postcss": "^8.5.10"
   },
   "dependencies": {
