@@ -226,3 +226,15 @@ def test_all_hand_labelled_examples_extract_cleanly():
 def test_brands_list_is_lowercase_and_unique_enough():
     assert all(b == b.lower() for b in BRANDS)
     assert len(set(BRANDS)) > 30
+
+
+@pytest.mark.parametrize("url,expected_ext", [
+    ("https://github.com/python/cpython/blob/main/Lib/json/decoder.py", "py"),
+    ("http://192.168.14.99:8080/bins/mirai.arm7", "arm7"),
+    ("https://www.tandoori-palace.co.uk/menu/starters.php?id=1", "php"),
+    ("https://en.wikipedia.org/wiki/Shannon_entropy", "<none>"),
+    ("https://example.com/v1.2.3/", "<none>"),
+])
+def test_path_ext_extraction(url, expected_ext):
+    feats = extract_features(url)
+    assert feats["path_ext"] == expected_ext

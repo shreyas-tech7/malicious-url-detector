@@ -1,56 +1,74 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
+# Dependencies
 /node_modules
 /.pnp
 .pnp.js
 .yarn/install-state.gz
 
-# testing
+# Testing
 /coverage
 
-# next.js
+# Next.js
 /.next/
 /out/
 
-# production
+# Production build
 /build
 
-# misc
+# OS / Misc
 .DS_Store
-*.pem
+Thumbs.db
 
-# debug
+# Keys, tokens, certificates, and credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.der
+*credentials*.json
+*service-account*.json
+.secrets*
+*.token
+
+# Environment files (never commit real secrets; keep .env.example)
+.env
+.env.*
+.env*.local
+ml/.env
+ml/.env.*
+!.env.example
+
+# Debug logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# local env files
-.env*.local
-
-# vercel
+# Vercel
 .vercel
 
-# typescript
+# TypeScript
 *.tsbuildinfo
 next-env.d.ts
 
-# ---- Python / ML ----
+# Python / ML virtual environments and caches
 ml/.venv/
+.venv/
+venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Raw + processed datasets are large and rebuildable from scripts.
-# The build is reproducible via `python ml/data_acquisition.py`, so we ship
-# the scripts and the manifest, not the bulk data.
+# Raw + processed datasets are large or subject to third-party feed terms and
+# are rebuildable via `python ml/data_acquisition.py` and `python ml/build_dataset.py`.
+# We commit the acquisition scripts and provenance manifest, not the bulk data.
 ml/data/raw/*
 ml/data/processed/*
 !ml/data/raw/.gitkeep
 !ml/data/processed/.gitkeep
 !ml/data/**/MANIFEST.json
+*.parquet
 
 # Model artifacts ARE committed (the serverless function needs them at runtime)
 # — see ml/artifacts/. Nothing to ignore there.
-
-.vercel

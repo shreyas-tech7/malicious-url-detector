@@ -181,7 +181,7 @@ moderates are a transitive `postcss` issue inside Next itself, whose suggested
 
 **Reused an existing empty Supabase project rather than creating one.** The
 brief said to create a project. `list_projects` showed one already there
-(`ppdzhizdcqctzwxfoosk`, created the same day, under a different email from the
+(`<project-ref>`, created the same day, under a different email from the
 workspace account) with **zero user tables**. Applying the schema was purely
 additive with nothing to overwrite, and creating a second project would have
 left a confusing duplicate. Checked before acting rather than assuming an
