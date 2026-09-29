@@ -19,7 +19,13 @@ ml/build_dataset.py
 ml/data_acquisition.py
 ml/generalization_probe.py
 
-# Repo docs
+# Repo docs and static documentation assets
+MODEL_CARD.md
 DECISIONS.md
+SECURITY.md
+PRIVACY.md
+DATA_SOURCES.md
+LICENSE
+docs/
 supabase/
 .github/

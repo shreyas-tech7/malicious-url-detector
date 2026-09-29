@@ -46,7 +46,8 @@
         "train_pos_rate": 0.48086911802519927,
         "test_pos_rate": 0.4663882664493787,
         "n_iter": 400
-      }
+      },
+      "accuracy": 0.9234059889997963
     },
     "with_reputation": {
       "threshold": 0.5,
@@ -77,7 +78,8 @@
         "train_pos_rate": 0.48086911802519927,
         "test_pos_rate": 0.4663882664493787,
         "n_iter": 400
-      }
+      },
+      "accuracy": 0.9289060908535344
     },
     "random_split": {
       "threshold": 0.5,
@@ -108,7 +110,8 @@
         "train_pos_rate": 0.47948491028255547,
         "test_pos_rate": 0.47179803588873465,
         "n_iter": 400
-      }
+      },
+      "accuracy": 0.9419507429687902
     },
     "no_https_feature": {
       "threshold": 0.5,
@@ -141,7 +144,8 @@
         "train_pos_rate": 0.48086911802519927,
         "test_pos_rate": 0.4663882664493787,
         "n_iter": 400
-      }
+      },
+      "accuracy": 0.9214198411081687
     }
   },
   "leakage_audit": {
@@ -329,7 +333,15 @@
       "recall": 0.9124262939506442,
       "tpr": 0.9124262939506442,
       "fpr": 0.06699751861042183,
-      "flagged": 9058
+      "flagged": 9058,
+      "accuracy": 0.9234059889997963,
+      "f1": 0.9174352217830478,
+      "confusion": {
+        "tn": 9776,
+        "fp": 702,
+        "fn": 802,
+        "tp": 8356
+      }
     },
     {
       "threshold": 0.7,
@@ -337,7 +349,15 @@
       "recall": 0.8671107228652544,
       "tpr": 0.8671107228652544,
       "fpr": 0.038652414582935675,
-      "flagged": 8346
+      "flagged": 8346,
+      "accuracy": 0.9173966184558974,
+      "f1": 0.9073354661791591,
+      "confusion": {
+        "tn": 10073,
+        "fp": 405,
+        "fn": 1217,
+        "tp": 7941
+      }
     },
     {
       "threshold": 0.8,
@@ -345,7 +365,15 @@
       "recall": 0.8295479362306181,
       "tpr": 0.8295479362306181,
       "fpr": 0.023954953235350258,
-      "flagged": 7848
+      "flagged": 7848,
+      "accuracy": 0.9077205133428397,
+      "f1": 0.8934493708103022,
+      "confusion": {
+        "tn": 10227,
+        "fp": 251,
+        "fn": 1561,
+        "tp": 7597
+      }
     },
     {
       "threshold": 0.9,
@@ -353,7 +381,15 @@
       "recall": 0.7676348547717843,
       "tpr": 0.7676348547717843,
       "fpr": 0.0101164344340523,
-      "flagged": 7136
+      "flagged": 7136,
+      "accuracy": 0.8862293746180485,
+      "f1": 0.8628943169264761,
+      "confusion": {
+        "tn": 10372,
+        "fp": 106,
+        "fn": 2128,
+        "tp": 7030
+      }
     },
     {
       "threshold": 0.95,
@@ -361,7 +397,15 @@
       "recall": 0.708124044551212,
       "tpr": 0.708124044551212,
       "fpr": 0.005535407520519183,
-      "flagged": 6543
+      "flagged": 6543,
+      "accuracy": 0.8609187207170503,
+      "f1": 0.8260620342653334,
+      "confusion": {
+        "tn": 10420,
+        "fp": 58,
+        "fn": 2673,
+        "tp": 6485
+      }
     },
     {
       "threshold": 0.99,
@@ -369,7 +413,15 @@
       "recall": 0.5471718715876829,
       "tpr": 0.5471718715876829,
       "fpr": 0.0003817522427944264,
-      "flagged": 5015
+      "flagged": 5015,
+      "accuracy": 0.7886025667141984,
+      "f1": 0.7071191702532985,
+      "confusion": {
+        "tn": 10474,
+        "fp": 4,
+        "fn": 4147,
+        "tp": 5011
+      }
     }
   ],
   "base_rate_precision": {
@@ -488,69 +540,357 @@
     "false_positives": [
       {
         "url": "http://thingsmygirlfriendandihavearguedabout.com/",
-        "proba": 0.999
+        "proba": 0.999,
+        "live_proba": 0.9985,
+        "top_features": [
+          {
+            "feature": "is_https",
+            "value": 0.0,
+            "contribution": 2.113
+          },
+          {
+            "feature": "tld",
+            "value": 0.0,
+            "contribution": -1.4083
+          },
+          {
+            "feature": "longest_token_length",
+            "value": 37.0,
+            "contribution": 1.3826
+          }
+        ]
       },
       {
         "url": "http://english.peopledaily.com.cn/data/people/zengqinghong.shtml",
-        "proba": 0.997
+        "proba": 0.997,
+        "live_proba": 0.9968,
+        "top_features": [
+          {
+            "feature": "url_length",
+            "value": 64.0,
+            "contribution": -1.5735
+          },
+          {
+            "feature": "is_https",
+            "value": 0.0,
+            "contribution": 1.1109
+          },
+          {
+            "feature": "path_length",
+            "value": 31.0,
+            "contribution": -0.8129
+          }
+        ]
       },
       {
         "url": "https://cogniflow-v2.emergent.host/",
-        "proba": 0.994
+        "proba": 0.994,
+        "live_proba": 0.9938,
+        "top_features": [
+          {
+            "feature": "hostname_length",
+            "value": 26.0,
+            "contribution": 1.5117
+          },
+          {
+            "feature": "digit_ratio",
+            "value": 0.0286,
+            "contribution": 1.0446
+          },
+          {
+            "feature": "hostname_entropy",
+            "value": 4.027,
+            "contribution": 0.8898
+          }
+        ]
       },
       {
         "url": "http://replicated.live/blog/follow-up",
-        "proba": 0.99
+        "proba": 0.99,
+        "live_proba": 0.9903,
+        "top_features": [
+          {
+            "feature": "is_https",
+            "value": 0.0,
+            "contribution": 4.6982
+          },
+          {
+            "feature": "tld",
+            "value": 46.0,
+            "contribution": 1.0655
+          },
+          {
+            "feature": "subdomain_count",
+            "value": 0.0,
+            "contribution": 0.7629
+          }
+        ]
       },
       {
         "url": "https://jorviksoftware.cc/utilities/rainbowapple",
-        "proba": 0.987
+        "proba": 0.987,
+        "live_proba": 0.9873,
+        "top_features": [
+          {
+            "feature": "special_char_ratio",
+            "value": 0.125,
+            "contribution": 2.4864
+          },
+          {
+            "feature": "brand_outside_domain",
+            "value": 1.0,
+            "contribution": 2.371
+          },
+          {
+            "feature": "longest_token_length",
+            "value": 14.0,
+            "contribution": 0.5202
+          }
+        ]
       },
       {
         "url": "http://members.authorsguild.net/betsyhaynes/",
-        "proba": 0.987
+        "proba": 0.987,
+        "live_proba": 0.9871,
+        "top_features": [
+          {
+            "feature": "tld",
+            "value": 4.0,
+            "contribution": -3.6938
+          },
+          {
+            "feature": "keyword_count",
+            "value": 1.0,
+            "contribution": 2.5941
+          },
+          {
+            "feature": "hostname_entropy",
+            "value": 3.8868,
+            "contribution": 2.3422
+          }
+        ]
       },
       {
         "url": "http://replicated.live/blog/worktree",
-        "proba": 0.987
+        "proba": 0.987,
+        "live_proba": 0.9869,
+        "top_features": [
+          {
+            "feature": "is_https",
+            "value": 0.0,
+            "contribution": 4.6982
+          },
+          {
+            "feature": "tld",
+            "value": 46.0,
+            "contribution": 1.1662
+          },
+          {
+            "feature": "hostname_entropy",
+            "value": 3.3232,
+            "contribution": -0.9508
+          }
+        ]
       },
       {
         "url": "https://globalresearchspace.com/space#7.65/-16.827/42.731/-35.7/68",
-        "proba": 0.987
+        "proba": 0.987,
+        "live_proba": 0.9834,
+        "top_features": [
+          {
+            "feature": "digit_ratio",
+            "value": 0.2727,
+            "contribution": 2.9583
+          },
+          {
+            "feature": "tld",
+            "value": 0.0,
+            "contribution": -2.2326
+          },
+          {
+            "feature": "subdomain_count",
+            "value": 0.0,
+            "contribution": 1.3184
+          }
+        ]
       }
     ],
     "false_negatives": [
       {
         "url": "https://ricardo.erhalt24.com/ad_mart-item/lounge-set-in-top-zustand-sofa-2-clubsessel-tullow-fe837cb6",
-        "proba": 0.0
+        "proba": 0.0,
+        "live_proba": 0.0003,
+        "top_features": [
+          {
+            "feature": "tld",
+            "value": 0.0,
+            "contribution": -7.0698
+          },
+          {
+            "feature": "path_length",
+            "value": 73.0,
+            "contribution": -6.0446
+          },
+          {
+            "feature": "url_length",
+            "value": 101.0,
+            "contribution": -2.0028
+          }
+        ]
       },
       {
         "url": "https://dhlexpress.ee/blog/en/post/mission-critical-shipments-how-seven-businesses-found-solutions-that-were-right-for-t",
-        "proba": 0.001
+        "proba": 0.001,
+        "live_proba": 0.0005,
+        "top_features": [
+          {
+            "feature": "path_length",
+            "value": 99.0,
+            "contribution": -6.655
+          },
+          {
+            "feature": "tld",
+            "value": 73.0,
+            "contribution": -5.8325
+          },
+          {
+            "feature": "path_depth",
+            "value": 4.0,
+            "contribution": 2.3336
+          }
+        ]
       },
       {
         "url": "https://promocaodiasdopais.myshopify.com/products/cozinha-suspensa-65cm-escorredor-de-loucas-copos-talheres-organizador-",
-        "proba": 0.002
+        "proba": 0.002,
+        "live_proba": 0.0065,
+        "top_features": [
+          {
+            "feature": "tld",
+            "value": 0.0,
+            "contribution": -5.6192
+          },
+          {
+            "feature": "path_length",
+            "value": 80.0,
+            "contribution": -5.0047
+          },
+          {
+            "feature": "url_length",
+            "value": 120.0,
+            "contribution": -1.9058
+          }
+        ]
       },
       {
         "url": "https://dhlexpress.ee/en/terms-and-conditions-2/volumetric-weight-calculator/",
-        "proba": 0.002
+        "proba": 0.002,
+        "live_proba": 0.0016,
+        "top_features": [
+          {
+            "feature": "tld",
+            "value": 73.0,
+            "contribution": -5.8122
+          },
+          {
+            "feature": "path_length",
+            "value": 56.0,
+            "contribution": -5.7678
+          },
+          {
+            "feature": "path_depth",
+            "value": 3.0,
+            "contribution": 1.6349
+          }
+        ]
       },
       {
         "url": "https://www.betaspace.dev/am/paiement.php/",
-        "proba": 0.002
+        "proba": 0.002,
+        "live_proba": 0.0016,
+        "top_features": [
+          {
+            "feature": "tld",
+            "value": 6.0,
+            "contribution": -7.6742
+          },
+          {
+            "feature": "longest_token_length",
+            "value": 9.0,
+            "contribution": -0.7731
+          },
+          {
+            "feature": "url_entropy",
+            "value": 3.8128,
+            "contribution": 0.4041
+          }
+        ]
       },
       {
         "url": "https://mj-api.kun-ai.com/blog/from-blocky-to-brilliant-improving-video-quality-on-discord-go-live-on-amd-gpus",
-        "proba": 0.002
+        "proba": 0.002,
+        "live_proba": 0.0019,
+        "top_features": [
+          {
+            "feature": "path_length",
+            "value": 85.0,
+            "contribution": -6.9163
+          },
+          {
+            "feature": "tld",
+            "value": 0.0,
+            "contribution": -5.8455
+          },
+          {
+            "feature": "hyphen_count",
+            "value": 2.0,
+            "contribution": 1.6532
+          }
+        ]
       },
       {
         "url": "https://mj-api.kun-ai.com/blog/discord-github-help-make-online-hackathons-easier-for-everyone",
-        "proba": 0.003
+        "proba": 0.003,
+        "live_proba": 0.0026,
+        "top_features": [
+          {
+            "feature": "path_length",
+            "value": 68.0,
+            "contribution": -6.5456
+          },
+          {
+            "feature": "tld",
+            "value": 0.0,
+            "contribution": -5.717
+          },
+          {
+            "feature": "hyphen_count",
+            "value": 2.0,
+            "contribution": 1.7526
+          }
+        ]
       },
       {
         "url": "https://dhlexpress.ee/en/starter-hub/additional-service-options/",
-        "proba": 0.003
+        "proba": 0.003,
+        "live_proba": 0.0027,
+        "top_features": [
+          {
+            "feature": "path_length",
+            "value": 43.0,
+            "contribution": -4.9376
+          },
+          {
+            "feature": "tld",
+            "value": 73.0,
+            "contribution": -4.098
+          },
+          {
+            "feature": "path_depth",
+            "value": 3.0,
+            "contribution": 1.9184
+          }
+        ]
       }
     ]
   }

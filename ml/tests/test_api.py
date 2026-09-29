@@ -173,8 +173,8 @@ def test_clean_document_is_not_flagged():
 # Security behaviours (regression tests for the Phase 8 audit findings)
 # --------------------------------------------------------------------------
 def test_logged_url_has_query_string_redacted():
-    """Query strings carry reset tokens and session ids; they must not persist."""
-    from api.index import _redact_url
+    """Query strings, fragments, credentials, and overlong paths must not persist."""
+    from api.index import MAX_LOGGED_URL_LENGTH, _redact_url
 
     out = _redact_url(
         "https://example.com/reset?token=SUPERSECRET123&user=alice")
@@ -185,8 +185,55 @@ def test_logged_url_has_query_string_redacted():
     frag = _redact_url("https://example.com/p#access_token=SECRET")
     assert "SECRET" not in frag
 
+    # Fragment before query string must strip from the earliest separator (#).
+    frag_first = _redact_url("https://example.com/p#frag_secret?query_secret=1")
+    assert "frag_secret" not in frag_first
+    assert "query_secret" not in frag_first
+    assert frag_first == "https://example.com/p#[redacted]"
+
+    # Userinfo credentials in authority must be redacted.
+    creds = _redact_url("https://alice:hunter2@example.com/account/login?sid=99")
+    assert "alice" not in creds
+    assert "hunter2" not in creds
+    assert "99" not in creds
+    assert creds == "https://[redacted]@example.com/account/login?[redacted]"
+
+    # Overlong path tokens must be truncated to MAX_LOGGED_URL_LENGTH.
+    long_url = "https://example.com/reset/" + ("a" * 500) + "?token=xyz"
+    truncated = _redact_url(long_url)
+    assert len(truncated) <= MAX_LOGGED_URL_LENGTH
+    assert "...[truncated]" in truncated
+    assert "?[redacted]" in truncated
+
     # A URL with no query is preserved intact.
     assert _redact_url("https://example.com/a/b") == "https://example.com/a/b"
+
+
+def test_predict_logs_redacted_url_and_sha256_never_full_url(monkeypatch):
+    """Ensure the prediction logger never receives raw query tokens or raw IPs."""
+    from api import index as api_index
+
+    captured = {}
+
+    def fake_log(**row):
+        captured.update(row)
+
+    monkeypatch.setattr(api_index, "_log_prediction", fake_log)
+    monkeypatch.delenv("IP_HASH_SALT", raising=False)
+
+    secret_url = "https://user:secretpass@example.com/reset?token=LIVE_TOKEN_999"
+    r = client.post(
+        "/api/predict",
+        json={"url": secret_url},
+        headers={"X-Real-IP": "203.0.113.42"},
+    )
+    assert r.status_code == 200
+    assert "LIVE_TOKEN_999" not in captured["url"]
+    assert "secretpass" not in captured["url"]
+    assert captured["url"] == "https://[redacted]@example.com/reset?[redacted]"
+    assert len(captured["url_sha256"]) == 64
+    # Without IP_HASH_SALT, client_ip_hash must be None rather than unsalted.
+    assert captured["client_ip_hash"] is None
 
 
 def test_client_ip_ignores_attacker_supplied_leftmost_forwarded_for():

@@ -62,6 +62,7 @@ MODEL_PATH = _REPO_ROOT / "ml" / "artifacts" / "model.joblib"
 
 # ---- limits ---------------------------------------------------------------
 MAX_URL_LENGTH = 2048          # beyond this, nothing informative is added
+MAX_LOGGED_URL_LENGTH = 256    # stored URLs are redacted + truncated; full URL is only hashed
 MAX_HEADER_SAMPLE_BYTES = 64   # enough for any magic number we check
 DEFAULT_THRESHOLD = float(os.environ.get("PREDICT_THRESHOLD", "0.5"))
 RATE_LIMIT_PER_MINUTE = int(os.environ.get("RATE_LIMIT_PER_MINUTE", "30"))
@@ -265,21 +266,51 @@ def _client_ip(request: Request, forwarded: str | None,
 
 
 def _redact_url(url: str) -> str:
-    """Drop the query string and fragment before a URL is persisted.
+    """Drop credentials, query strings, and fragments, and bound length before persistence.
 
-    Query strings routinely carry password-reset tokens, session identifiers,
-    signed object URLs and API keys. Storing submitted URLs verbatim would turn
-    the prediction log into a secondary credential store — a more attractive
-    target than anything else in this project. The full string is still
-    represented by its SHA-256 for grouping repeat submissions.
+    Query strings, fragments, and authority userinfo routinely carry password-reset
+    tokens, session identifiers, signed object URLs, basic-auth credentials, and API
+    keys. Storing submitted URLs verbatim would turn the prediction log into a
+    secondary credential store. The full string is still represented by its SHA-256
+    for grouping repeat submissions.
     """
-    raw = (url or "")[:2048]
-    for sep in ("?", "#"):
-        idx = raw.find(sep)
-        if idx != -1:
-            raw = raw[:idx] + sep + "[redacted]"
-            break
-    return raw
+    raw = "".join(
+        ch for ch in (url or "").strip()[:MAX_URL_LENGTH]
+        if ord(ch) >= 0x20 and ord(ch) != 0x7F
+    )
+    if not raw:
+        return ""
+
+    # Strip from whichever of '?' or '#' appears first.
+    q_idx = raw.find("?")
+    h_idx = raw.find("#")
+    cut_indices = [i for i in (q_idx, h_idx) if i != -1]
+    suffix = ""
+    if cut_indices:
+        first_sep = min(cut_indices)
+        sep_char = raw[first_sep]
+        raw = raw[:first_sep]
+        suffix = f"{sep_char}[redacted]"
+
+    # Redact userinfo credentials in the authority (e.g. https://user:pass@host/path).
+    scheme_prefix = ""
+    rest = raw
+    if "://" in raw:
+        scheme, _, rest = raw.partition("://")
+        scheme_prefix = f"{scheme}://"
+    authority, slash, path_part = rest.partition("/")
+    if "@" in authority:
+        _, _, host_part = authority.rpartition("@")
+        authority = f"[redacted]@{host_part}"
+    redacted_base = f"{scheme_prefix}{authority}{slash}{path_part}"
+
+    # Truncate overly long paths so high-entropy path tokens are not stored in full.
+    budget = MAX_LOGGED_URL_LENGTH - len(suffix)
+    if len(redacted_base) > budget:
+        marker = "...[truncated]"
+        redacted_base = redacted_base[: max(0, budget - len(marker))] + marker
+
+    return redacted_base + suffix
 
 
 def _supabase_cfg() -> tuple[str, str] | None:
@@ -567,7 +598,8 @@ def predict(
 
     disclaimer = (
         "Classification is based on the URL string alone. The service did not "
-        "fetch or open this URL. Not a substitute for a security product."
+        "fetch or open this URL. Research and defensive tool only — not a "
+        "substitute for a security product."
     )
     if verdict == "uncertain":
         disclaimer = (

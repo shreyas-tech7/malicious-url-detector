@@ -28,8 +28,9 @@ const THRESHOLD_MB = argThreshold !== -1
   ? Number(process.argv[argThreshold + 1])
   : 230;
 
-// Vercel's documented uncompressed limit for a serverless function.
+// Vercel's documented uncompressed limit for a serverless function (250 MiB).
 const VERCEL_LIMIT_MB = 250;
+const BYTES_PER_MB = 1024 * 1024;
 
 function parseRequirements(file) {
   if (!existsSync(file)) return [];
@@ -94,10 +95,10 @@ function measureLocal() {
     if (!existsSync(p)) continue;
     const bytes = dirSizeBytes(p);
     total += bytes;
-    parts.push({ name: d, mb: bytes / 1e6 });
+    parts.push({ name: d, mb: bytes / BYTES_PER_MB });
   }
   parts.sort((a, b) => b.mb - a.mb);
-  return { parts, totalMb: total / 1e6 };
+  return { parts, totalMb: total / BYTES_PER_MB };
 }
 
 /** Committed artifacts shipped alongside the code (model, hash table). */
@@ -106,7 +107,7 @@ function measureArtifacts() {
   if (!existsSync(dir)) return { parts: [], totalMb: 0 };
   const parts = readdirSync(dir).map((f) => ({
     name: f,
-    mb: statSync(join(dir, f)).size / 1e6,
+    mb: statSync(join(dir, f)).size / BYTES_PER_MB,
   }));
   return { parts, totalMb: parts.reduce((a, b) => a + b.mb, 0) };
 }

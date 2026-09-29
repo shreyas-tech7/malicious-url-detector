@@ -72,13 +72,15 @@ export default function Home() {
 
       <footer className="mt-20 border-t border-line pt-6">
         <p className="max-w-[68ch] text-xs leading-relaxed text-fg-faint">
-          Portfolio demonstration of a full ML pipeline: data acquisition,
-          leakage-aware evaluation, and serverless deployment. Not a substitute
-          for a real security product. See{' '}
+          Responsible-use notice: this is a research and defensive tool, not a
+          production security control. Portfolio demonstration of a full ML
+          pipeline: data acquisition, leakage-aware evaluation, and serverless
+          deployment. See{' '}
+          <code className="font-mono text-fg-muted">MODEL_CARD.md</code> and{' '}
           <code className="font-mono text-fg-muted">
             ml/reports/EVALUATION.md
           </code>{' '}
-          for measured performance and an honest limitations section.
+          for measured performance and limitations.
         </p>
       </footer>
     </main>

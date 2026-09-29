@@ -1,3 +1,39 @@
+# Security Policy & Audit — Malicious URL & File-Signature Detector
+
+## Responsible-Use Notice
+
+This repository and its deployed service are a **research and defensive tool** built to demonstrate an end-to-end machine learning pipeline for URL classification and static file-signature triage. It is **not** a production security control, firewall, or threat-intelligence feed, and its verdicts must not be treated as proof that a link or file is safe.
+
+---
+
+## Input Sanitization, URL Privacy & Logging Policy
+
+Because this service accepts URLs that users suspect may be malicious or phishing links, submitted URLs routinely carry password-reset tokens, OAuth state parameters, session identifiers, signed object-storage URLs, or embedded credentials. Input validation and data minimization are enforced at both the Next.js gateway (`lib/inference.ts`, `app/scan/route.ts`, `app/check/route.ts`) and the FastAPI serverless function (`api/index.py`).
+
+### 1. Input Sanitization & Validation
+- **Never dereferenced (SSRF prevention):** Submitted URLs are never fetched, resolved via DNS, rendered, or followed. All 28 features are computed strictly from the URL string in `ml/features.py` (using `tldextract` with `suffix_list_urls=()` and `cache_dir=None` so no outbound network call or filesystem write occurs).
+- **Length & character bounds:** URLs must be non-empty strings of at most `2,048` characters (`MAX_URL_LENGTH = 2048`). Any URL containing C0 control bytes (`< 0x20`) or `DEL` (`0x7f`) — including `\r`, `\n`, and `\x00` — is rejected with HTTP `422`.
+- **Scheme allowlist:** Explicit schemes other than `http` and `https` (such as `javascript:`, `data:`, `file:`, `ftp:`, `vbscript:`) are rejected outright with HTTP `422` at both layers so non-web URIs are never scored or reflected.
+- **No full-file ingestion:** `POST /check` and `POST /api/check-file` never accept file uploads. Hashing runs in the browser via WebCrypto; the server accepts only a hex digest (`md5`, `sha1`, or `sha256`), filename (`<= 512` chars), MIME type (`<= 255` chars), and at most `64` decoded header bytes (`MAX_HEADER_SAMPLE_BYTES = 64`) for magic-byte comparison.
+- **Non-reflective validation errors:** Custom `RequestValidationError` handling in `api/index.py` strips FastAPI's default `input` and `ctx` fields and caps errors at 10 entries so rejected payloads are never echoed back to the caller.
+
+### 2. Do Not Log Full Submitted URLs (Redaction, Truncation & Hashing)
+Full submitted URLs are **never** written to stdout/console logs or stored verbatim in the database:
+- **Query string and fragment stripping (`_redact_url`):** Before any prediction record is sent to Supabase, `_redact_url()` finds the earliest `?` or `#` delimiter and replaces the entire query string or fragment with `?[redacted]` or `#[redacted]`.
+  - Submitted: `https://app.example/reset?token=eyJhbGciOi...&user=alice`
+  - Stored: `https://app.example/reset?[redacted]`
+- **Embedded credential stripping:** Any `userinfo@` component in the URL authority (e.g., `https://user:secret@example.com/login`) is replaced with `[redacted]@` (`https://[redacted]@example.com/login`).
+- **Path truncation (`MAX_LOGGED_URL_LENGTH = 256`):** If the redacted URL still exceeds `256` characters (for example, when an application embeds a long token inside a path segment), it is truncated to fit within `256` characters with `...[truncated]`.
+- **Full-URL SHA-256 hashing (`url_sha256`):** To detect repeat submissions without storing sensitive query parameters, only the one-way `SHA-256` hex digest of the submitted URL is stored alongside the redacted/truncated URL.
+- **Salted client IP hashing (`_hash_ip`):** Client IPs are never stored in plaintext. The prediction log stores `SHA-256(IP_HASH_SALT + ":" + ip)` only when `IP_HASH_SALT` is configured; if `IP_HASH_SALT` is unset, `client_ip_hash` is `NULL` (dropped completely rather than storing an unsalted, rainbow-table-reversible IPv4 digest). Rate limiting uses a separate ephemeral bucket key (`predict:<sha256(ip)>`) that is pruned hourly.
+- **Minimal feature logging & 30-day retention:** Only the top 5 contributing feature values (not the full vector, headers, cookies, or user-agent) are stored. Database-native `pg_cron` (`purge_old_predictions(30)`) rolls up daily counts and deletes raw prediction rows older than 30 days.
+
+### 3. Secret Scan & Credential Hygiene
+- **Repository secret scan:** The working tree and git commit history were scanned for API keys, JWTs (`eyJ...`), Supabase keys (`sbp_`, `sb_secret_`), GitHub tokens (`ghp_`, `github_pat_`), private keys (`-----BEGIN`), and `.env` files. No live secret keys or tokens were committed. One hardcoded Supabase project reference slug in `DECISIONS.md` was redacted to `<project-ref>`.
+- **Rotation guidance:** All runtime secrets (`SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_ANON_KEY`, `IP_HASH_SALT`, `CRON_SECRET`, `URLHAUS_AUTH_KEY`) live exclusively in server-side environment variables (Vercel project settings / GitHub Actions secrets) and are excluded by `.gitignore`. If any key is ever suspected of exposure, rotate `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_ANON_KEY` in the Supabase dashboard (**Project Settings → API**), regenerate `CRON_SECRET` and `IP_HASH_SALT` (`openssl rand -hex 32`), and update the Vercel environment variables.
+
+---
+
 # Security Audit — SENTINEL
 
 Three passes, newest first.
